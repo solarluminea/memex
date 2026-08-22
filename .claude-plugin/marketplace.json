@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "memex",
+  "owner": {
+    "name": "Luminea PowerAI",
+    "email": "solar@luminea.sk"
+  },
+  "plugins": [
+    {
+      "name": "memex",
+      "source": "./",
+      "description": "Project memory that remembers where, not what. Archives session transcripts before Claude Code deletes them, indexes them for full-text search, and builds a trail of topics pointing at exact line ranges."
+    }
+  ]
+}
