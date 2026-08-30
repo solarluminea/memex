@@ -135,6 +135,25 @@ The key in parentheses matters as much as the label. The column reads *Power* on
 screen and lives as `powerKwp` in the data; without the pair, the map is findable
 by one and not the other.
 
+## Measuring instead of hoping
+
+Every number in this README came from an experiment run once, by hand. That is
+enough to pick a direction and not enough to know the direction worked.
+
+`/memex:stats` reads the transcripts Claude Code already writes and reports what
+navigation costs — **steps between being asked and changing something**, lookups
+and reads per edit, fresh tokens per edit, cache share. It compares the older
+half of your sessions against the newer one.
+
+It does **not** report savings, on purpose. "This saved 7k tokens" is a claim
+about a session that never happened. The rows are counts; the judgement is left
+to a person looking at two periods of real work.
+
+Building it immediately caught a mistake in its own first draft: averaging per
+session showed everything dropping 80 %, which measured how long sessions were,
+not how well they navigated. Per edit, the same data reads 1.2 lookups and 36k
+fresh tokens — numbers that mean something.
+
 ## Commands
 
 | | |
@@ -144,6 +163,7 @@ by one and not the other.
 | `/memex:search <topic>` | find where something was decided |
 | `/memex:distill` | build the trail (batch job, tens of minutes) |
 | `/memex:status` | health: what's archived, indexed, uncovered |
+| `/memex:stats` | what navigation costs: steps and tokens per edit |
 
 A SessionEnd hook runs the archiver, refreshes the full-text index and rebuilds
 the map, so none of them can be forgotten — without the index step the first
@@ -158,6 +178,7 @@ is paid on use.
 | `MEMEX_ARCHIVE` | `.memex/archive` |
 | `MEMEX_TRAIL` | `.memex/trail` |
 | `MEMEX_MAP` | `.memex/MAP.md` |
+| `MEMEX_STATS` | `.memex/stats.jsonl` |
 | `MEMEX_PROJECT` | derived from the project path |
 
 The map picks its own source folders (`src`, `lib`, `app`, `packages`, …) and

@@ -104,6 +104,7 @@ cue, not a defect.
 | "why did we do it this way?" | `/memex:search <topic>` |
 | after new sessions pile up | `/memex:distill` |
 | "how's the memory doing?" | `/memex:status` |
+| "is any of this actually helping?" | `/memex:stats` |
 
 A SessionEnd hook runs the archiver, refreshes the full-text index and rebuilds
 the map, so none of them can be forgotten. The map costs no tokens to rebuild — it is a script, not a model.
@@ -132,6 +133,7 @@ why it was abandoned, and what the numbers were.
 | `MEMEX_ARCHIVE` | `.memex/archive` |
 | `MEMEX_TRAIL` | `.memex/trail` |
 | `MEMEX_MAP` | `.memex/MAP.md` |
+| `MEMEX_STATS` | `.memex/stats.jsonl` |
 | `MEMEX_PROJECT` | derived from the project path |
 
 The map picks its own source folders (`src`, `lib`, `app`, `packages`, …) and
