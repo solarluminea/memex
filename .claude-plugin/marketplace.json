@@ -9,7 +9,7 @@
     {
       "name": "memex",
       "source": "./",
-      "description": "Project memory that remembers where, not what. Archives session transcripts before Claude Code deletes them, indexes them for full-text search, and builds a trail of topics pointing at exact line ranges."
+      "description": "Project memory and a code map, both built from pointers rather than retellings. Archives session transcripts before Claude Code deletes them, indexes them for full-text search, builds a trail of topics pointing at exact line ranges, and generates a one-line-per-module map of the code that says which file to open."
     }
   ]
 }

@@ -1,13 +1,23 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "memex",
-  "version": "0.1.0",
-  "description": "Project memory that remembers where, not what. Archives session transcripts before Claude Code deletes them, indexes them for full-text search, and builds a trail of topics pointing at exact line ranges. Measured against summary-style memory: 100% vs 55% on 22 questions, three runs, blind judges.",
+  "version": "0.2.0",
+  "description": "Project memory and a code map, both built from pointers rather than retellings. Archives session transcripts before Claude Code deletes them, indexes them for full-text search, builds a trail of topics pointing at exact line ranges, and generates a one-line-per-module map of the code that says which file to open.",
   "author": {
     "name": "Luminea PowerAI",
     "email": "solar@luminea.sk"
   },
   "homepage": "https://github.com/solarluminea/memex",
-  "keywords": ["memory", "transcripts", "search", "context", "archive"],
-  "skills": ["./"]
+  "keywords": [
+    "memory",
+    "transcripts",
+    "search",
+    "context",
+    "archive",
+    "code-map",
+    "navigation"
+  ],
+  "skills": [
+    "./"
+  ]
 }

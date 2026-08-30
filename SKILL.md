@@ -1,6 +1,6 @@
 ---
 name: memex
-description: Project memory across sessions. Use when the user asks about the project's past ("why did we do it this way", "did we already try…", "what did we measure back then"), when transcripts need archiving or searching, or when they mention memory, history, decisions made earlier, or distilling. Do not use for finding code — that's what grep is for.
+description: Project memory and a code map across sessions. Use when the user asks about the project's past ("why did we do it this way", "did we already try…", "what did we measure back then"), when transcripts need archiving or searching, when they mention memory, history, decisions made earlier, or distilling — and when the question is "which file does X" in a codebase too large to grep blind. Not for finding an exact string; grep is cheaper and better at that.
 ---
 
 # Memex — remembers where, not what
@@ -11,7 +11,21 @@ importantly, the **trails between them**. Storage was the easy part. The trail
 
 This is that, for Claude Code sessions.
 
-## Three layers
+## Two questions, one idea
+
+**"Why did we do it this way?"** — the archive and the trail.
+**"Which file does this?"** — the map.
+
+Both answer with a **pointer**, never with a retelling. A pointer has nothing
+to lose: the thing it points at is still there in full, so it cannot quietly
+drift away from the truth the way a summary does.
+
+They are not interchangeable and neither replaces `grep`. The map says which
+file deals with offers; grep says where a given string is written; the archive
+says why the column was added in the first place. Reach for the cheapest one
+that answers the question actually asked.
+
+## Three layers of memory
 
 **Archive** (`.memex/archive/`) — session transcripts saved before Claude Code
 deletes them at 30 days. Only the conversation is kept; tool results and
@@ -51,16 +65,48 @@ into it cannot go stale.
 It also came out cheaper than searching the raw archive — a third fewer
 tokens, because the reader picks from headings instead of hunting.
 
+## The map (`.memex/MAP.md`)
+
+One line per module: which file to open. Generated from the code in under a
+second, so it is never written by hand and never has to be maintained.
+
+A module's description comes from the first of three sources that yields one:
+
+1. **The header comment.** Written by a person, so it says *why the module
+   exists* — something no parser can infer from the syntax.
+2. **The interface strings.** For UI files with no header: the labels a person
+   reads on screen, paired with the key beside them in the code, so a column
+   reads `Power (powerKwp)`. Measured: of 48 files with no header, 47 got a
+   usable description this way.
+3. **Nothing.** A dash — a work list, not an error.
+
+Point two is the part no other tool does. Aider and Serena read the AST;
+memory tools read conversations; **nobody reads the strings the app displays.**
+In an English codebase there is no reason to — the button says "Deals" and the
+file is `DealsTable.tsx`. In a codebase whose interface is in another language,
+that is the only place the user's own vocabulary is written down, and it is
+exactly the vocabulary they phrase tasks in.
+
+⚠️ **The map says which file to open, not what is in it.** Inferring the
+contents from one line is the mistake that costs a day of rework.
+
+⚠️ **Do not try to make it know everything.** Every extra term is another thing
+that can go stale, and a stale map is worse than no map — it sends the reader
+somewhere that no longer exists. When the map comes up empty, that is grep's
+cue, not a defect.
+
 ## What to run when
 
 | situation | command |
 |---|---|
+| "which file does X?" | `/memex:map <word>` |
 | regularly, so history isn't lost | `/memex:archive` |
 | "why did we do it this way?" | `/memex:search <topic>` |
 | after new sessions pile up | `/memex:distill` |
 | "how's the memory doing?" | `/memex:status` |
 
-A SessionEnd hook runs the archiver too, so it cannot be forgotten.
+A SessionEnd hook runs the archiver and rebuilds the map, so neither can be
+forgotten. The map costs no tokens to rebuild — it is a script, not a model.
 
 ## Answering a question from the past
 
@@ -85,7 +131,19 @@ why it was abandoned, and what the numbers were.
 | `MEMEX_ROOT` | `.memex` |
 | `MEMEX_ARCHIVE` | `.memex/archive` |
 | `MEMEX_TRAIL` | `.memex/trail` |
+| `MEMEX_MAP` | `.memex/MAP.md` |
 | `MEMEX_PROJECT` | derived from the project path |
+
+The map picks its own source folders (`src`, `lib`, `app`, `packages`, …) and
+skips the generated ones. To override that, put `.memex/map.json` next to it:
+
+```json
+{ "areas": ["src", "scripts"], "skip": ["legacy"], "maxTerms": 6 }
+```
 
 Commit the archive. Do not commit `.search.db` — it's tens of megabytes and
 rebuilds in seconds.
+
+Commit `MAP.md` as well, even though it's generated. It's a small text file
+with a readable diff, and committing it means a fresh clone can be navigated
+before anything has been run.

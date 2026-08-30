@@ -100,17 +100,54 @@ Where this is in the transcript:
 - [`3f9c1a20.md` lines 1840–1855](../archive/3f9c1a20.md#L1840-L1855)
 ```
 
+## The map: the same idea, pointed at the code
+
+The archive answers *why did we do it this way*. It has nothing to say about
+*which file does this* — and on a large project that question is asked far more
+often, several times an hour.
+
+So the map is the same trick aimed at the code: one generated line per module,
+saying which file to open and nothing more. It costs no tokens to build, because
+it is a script rather than a model — 1,297 modules in **0.44 seconds** on the
+project it was written for.
+
+A module's description comes from the first of three sources that yields one:
+the **header comment** (a human wrote it, so it says why the module exists), the
+**interface strings** for UI files without one, or a dash.
+
+That middle one is the part no other tool does:
+
+```
+src/app/crm/DealsTable.tsx — Deal (name) · Power (powerKwp) · Offer · Stage
+```
+
+Aider and Serena parse the AST. Memory tools read conversations. **Nobody reads
+the strings the app puts on screen** — and in an English codebase there's no
+reason to, because the button says "Deals" and the file is `DealsTable.tsx`.
+
+In a codebase whose interface isn't in English, that's the only place the user's
+own vocabulary is written down, and it's the vocabulary they phrase tasks in.
+Measured on such a project: of 48 files with no header comment, 47 got a usable
+description this way. Searching for `kWp` returned nothing before and returns
+exactly one file after — the right one.
+
+The key in parentheses matters as much as the label. The column reads *Power* on
+screen and lives as `powerKwp` in the data; without the pair, the map is findable
+by one and not the other.
+
 ## Commands
 
 | | |
 |---|---|
+| `/memex:map <word>` | which file to open |
 | `/memex:archive` | save transcripts, rebuild the index |
 | `/memex:search <topic>` | find where something was decided |
 | `/memex:distill` | build the trail (batch job, tens of minutes) |
 | `/memex:status` | health: what's archived, indexed, uncovered |
 
-A SessionEnd hook runs the archiver too, so it can't be forgotten. Always-on
-cost is about **310 tokens** per session; everything else is paid on use.
+A SessionEnd hook runs the archiver and rebuilds the map, so neither can be
+forgotten. Always-on cost is about **310 tokens** per session; everything else
+is paid on use.
 
 ## Configuration
 
@@ -119,10 +156,19 @@ cost is about **310 tokens** per session; everything else is paid on use.
 | `MEMEX_ROOT` | `.memex` |
 | `MEMEX_ARCHIVE` | `.memex/archive` |
 | `MEMEX_TRAIL` | `.memex/trail` |
+| `MEMEX_MAP` | `.memex/MAP.md` |
 | `MEMEX_PROJECT` | derived from the project path |
 
-Commit the archive — it's the actual memory. Don't commit `.search.db`; it's
-tens of megabytes and rebuilds in seconds.
+The map picks its own source folders (`src`, `lib`, `app`, `packages`, …) and
+skips the generated ones. Override it with `.memex/map.json`:
+
+```json
+{ "areas": ["src", "scripts"], "skip": ["legacy"], "maxTerms": 6 }
+```
+
+Commit the archive — it's the actual memory. Commit `MAP.md` too, so a fresh
+clone can be navigated before anything has been run. Don't commit `.search.db`;
+it's tens of megabytes and rebuilds in seconds.
 
 ## How the measurement was run
 
@@ -174,9 +220,18 @@ hit.
 
 ## What Memex is not
 
-It doesn't search your code — that's what grep is for, and it knows nothing
-about code. It doesn't replace `CLAUDE.md`; on a conflict, `CLAUDE.md` and the
-newer commit win, not the memory. And it doesn't remember everything.
+It isn't a code search. The map says which file to open; **grep says where a
+string is**, and grep is cheaper and better at it. When the map comes up empty
+that's grep's cue, not a defect — trying to make the map know everything is how
+you get a large map that's quietly out of date.
+
+It isn't a semantic index either. We measured that: on questions deliberately
+worded to share no word with the stored entry — the case embeddings are supposed
+to win — a plain index over a greppable archive scored the same as a vector one.
+Six out of six, both.
+
+It doesn't replace `CLAUDE.md`; on a conflict, `CLAUDE.md` and the newer commit
+win, not the memory. And it doesn't remember everything.
 
 That last one is the point of the name we didn't use. In Borges' story, Ireneo
 Funes remembers every leaf of every tree and, as a result, cannot think — he

@@ -38,7 +38,7 @@ try {
 }
 
 const ARCHIVE = process.env.MEMEX_ARCHIVE || join(process.cwd(), '.memex', 'archive');
-const INDEX = process.env.MEMEX_INDEX || join(ARCHIVEE, '.search.db');
+const INDEX = process.env.MEMEX_INDEX || join(ARCHIVE, '.search.db');
 
 /** Bez diakritiky a malými písmenami — druhá podoba každého úseku. */
 const bezDiakritiky = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -115,6 +115,6 @@ function hladaj(vyraz, n = 8) {
 }
 
 const arg = process.argv.slice(2);
-if (arg[0] === '--index') { mkdirSync(ARCHIVEE, { recursive: true }); postavIndex(arg[1] || ARCHIVE); }
+if (arg[0] === '--index') { mkdirSync(ARCHIVE, { recursive: true }); postavIndex(arg[1] || ARCHIVE); }
 else if (!arg.length) console.log('Usage: search.mjs --index | "query" [--n 8]');
 else hladaj(arg.filter((a) => !a.startsWith('--') && a !== arg[arg.indexOf('--n') + 1]).join(' '), Number(arg[arg.indexOf('--n') + 1]) || 8);
