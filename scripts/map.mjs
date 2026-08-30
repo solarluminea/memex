@@ -353,12 +353,28 @@ if (argv[0] === 'find') {
     všetky. Skóre je zámerne hlúpe: kde sa slovo našlo, váži viac než koľkokrát.
     Názov súboru je najsilnejší signál, lebo ho písal človek s úmyslom.
   */
+  /*
+    Dotaz odpísaný z adresného riadku.
+
+    Človek nehlási „v priečinku crm/[id]", hlási „na /crm/482 nejde uložiť".
+    Číslo je konkrétny záznam, v strome stojí `[id]`, a doslovná zhoda ich
+    nespojí. Preto sa okrem dotazu skúša aj jeho podoba bez číselných úsekov
+    proti ceste bez dynamických — `/crm/482` aj `src/app/crm/[id]/page.tsx`
+    sa zredukujú na `/crm/`.
+
+    Len ako druhý pokus a s nižším skóre: doslovná zhoda je vždy istejšia.
+  */
+  const bezCisel = word.replace(/\/\d+(?=\/|$)/g, '/');
+  const bezDynamickych = (p) => p.replace(/\[[^\]]+\]/g, '');
+  const akoUrl = bezCisel !== word ? bezCisel : null;
+
   const score = (m) => {
     const file = undiacritic(basename(m.path));
     const dir = undiacritic(dirname(m.path));
     const desc = undiacritic(m.description ?? '');
-    const where =
+    let where =
       (file.includes(word) ? 4 : 0) + (dir.includes(word) ? 2 : 0) + (desc.includes(word) ? 1 : 0);
+    if (!where && akoUrl && bezDynamickych(dir).includes(akoUrl)) where = 1.5;
     if (!where) return 0;
     /*
       Rozhodnutie pri remíze: koľko z názvu tvorí hľadané slovo.
