@@ -44,6 +44,22 @@ so the index stays small as the archive grows for years.
 that this and the incremental index solve overlapping problems — do the
 incremental one first and re-measure before starting this.
 
+### Compressing the cold end of the archive
+
+Transcripts are plain markdown. Measured on a real project: **65 MB across 37
+sessions**, so a year of work runs to gigabytes. `node:zlib` would cut that by
+roughly 85 % with no dependency.
+
+**Trigger:** the archive passes ~500 MB, or archiving noticeably slows a
+session end. Check with `du -sh .memex/archive`.
+
+⚠️ **Weigh it against what the measurement rewarded.** The arm that scored
+highest of everything tested was the raw archive searched with plain grep. A
+gzipped file is not greppable by the tools an agent actually has, so this
+trades away the strongest property for disk space, which is cheap. If it is
+ever built: compress only sessions older than the trail already covers, and
+leave recent ones as text.
+
 ### Decision threads
 
 A topic that develops over months lives as a dozen unrelated trail entries.
@@ -180,10 +196,42 @@ results, and dropping them is what makes the archive 3.6 MB instead of 467 MB.
 Errors that were actually discussed are already in the archive as text;
 measured, 1 transcript in 37 contains one.
 
+**Writing generated descriptions back into source headers.** A plugin that
+edits source files to improve its own index is a plugin that can corrupt a
+repository. And the generated line is the weaker of the two: a human header
+says *why the module exists*, which no extractor infers. Writing the weak
+version in permanently is how the strong one never gets written.
+
+**A scratchpad for work in progress.** Claude Code has `TodoWrite` and a
+scratchpad directory already — measured on one project, `TodoWrite` appears 80
+times across three sessions. A second mechanism for the same thing splits
+state across two places, which is worse than either alone.
+
+**Context modes per task type** (a "UI fix" not being allowed to read the
+archive). Something has to classify the task before the work starts, and that
+classification is itself a judgement that can be wrong — at which point the
+rule blocks the lookup that would have helped. What it saves is one cheap
+command.
+
+**A hand-maintained entity ledger** (`Deal` → `deal.ts`, `DealsTable.tsx`,
+table `deals`). Same objection as the glossary: a third list nothing
+generates. The generated version of this idea is the reverse import index,
+listed above with its trigger.
+
 **Embeddings or a vector index.** On questions deliberately worded to share no
 word with the stored entry — the case embeddings exist for — a plain index over
 a greppable archive scored 6/6, the same as a vector one. Do not revisit this
 without a measurement that beats that one.
+
+---
+
+## Built since this file was written
+
+**File → sessions** (`search.mjs --file <path>`). The archive records a summary
+of every tool call, so an edited path is written in it verbatim — measured, 35
+of 37 transcripts carry them. That made the planned git-blame route
+unnecessary: no commit trailers, no joining on dates, and it works on history
+that already exists.
 
 ---
 

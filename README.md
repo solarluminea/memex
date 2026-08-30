@@ -164,6 +164,7 @@ fresh tokens — numbers that mean something.
 | `/memex:distill` | build the trail (batch job, tens of minutes) |
 | `/memex:status` | health: what's archived, indexed, uncovered |
 | `/memex:stats` | what navigation costs: steps and tokens per edit |
+| `search.mjs --file <path>` | which sessions touched this file, and where |
 
 A SessionEnd hook runs the archiver, refreshes the full-text index and rebuilds
 the map, so none of them can be forgotten — without the index step the first

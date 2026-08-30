@@ -105,6 +105,7 @@ cue, not a defect.
 | after new sessions pile up | `/memex:distill` |
 | "how's the memory doing?" | `/memex:status` |
 | "is any of this actually helping?" | `/memex:stats` |
+| "why does this file look like this?" | `search.mjs --file <path>` |
 
 A SessionEnd hook runs the archiver, refreshes the full-text index and rebuilds
 the map, so none of them can be forgotten. The map costs no tokens to rebuild — it is a script, not a model.

@@ -16,6 +16,12 @@ How:
    It prints file, line range and a snippet; read the spot with `Read` using
    `offset`/`limit`. Diacritics don't matter — the index knows both forms.
 
+To go the other way — from a file to the conversations that changed it — use
+`node ${CLAUDE_PLUGIN_ROOT}/scripts/search.mjs --file <path>`. The archive
+records every tool call, so an edited path is written in it verbatim; this is
+the answer to "why does this file look like this" that a commit message cannot
+give.
+
 Answer in two to four sentences and **always cite the file and line numbers**.
 If the answer isn't in the archive, say so plainly — guessing is worse than
 admitting it.

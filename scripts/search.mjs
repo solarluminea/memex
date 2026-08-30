@@ -104,6 +104,68 @@ function postavIndex(priecinok = ARCHIVE) {
   if (!TICHO) console.log(`Index: ${spolu} chunks from ${suborov} transcripts -> ${cesta}`);
 }
 
+/**
+ * Which sessions touched this file, and where in them.
+ *
+ * The archive records a summary of every tool call, so a path that was edited
+ * is written in it verbatim. That turns the archive into a backlink index for
+ * free — the question "why does this file look like this" is answered by the
+ * conversation that changed it, not by the commit message someone wrote after.
+ *
+ * No table, no index. The archive is greppable and that is the property the
+ * measurement kept rewarding: the arm with the raw archive and no index scored
+ * highest of everything tested. Adding a schema here would trade that away for
+ * milliseconds nobody is waiting on.
+ *
+ * Paths are compared by their tail, normalised: the archive holds absolute
+ * Windows paths, the caller says `src/app/…`, and neither should have to know
+ * about the other.
+ */
+function podlaSuboru(cesta, n = 8) {
+  const hladane = cesta.replace(/\\/g, '/').toLowerCase().replace(/^.*?(?=src\/|scripts\/|lib\/|app\/)/, '');
+  const nalezy = [];
+
+  for (const f of readdirSync(ARCHIVE).sort()) {
+    if (!f.endsWith('.md') || f.startsWith('.')) continue;
+    const riadky = readFileSync(join(ARCHIVE, f), 'utf8').split('\n');
+    riadky.forEach((r, i) => {
+      if (!r.includes('[Tool:') && !r.includes('[Nástroj:')) return;
+      const kde = r.replace(/\\/g, '/').toLowerCase().indexOf(hladane);
+      if (kde < 0) return;
+      /*
+        Výrez okolo zhody, nie prvých sto znakov.
+
+        Bashový príkaz býva reťaz s desiatimi cestami a hľadaná je často až
+        na jeho konci — orezanie od začiatku potom ukáže úryvok, v ktorom to
+        slovo nie je, a nález vyzerá ako omyl nástroja.
+      */
+      const od = Math.max(0, kde - 30);
+      const text = (od ? '…' : '') + r.trim().slice(od, kde + hladane.length + 40) + '…';
+      nalezy.push({ subor: f, riadok: i + 1, text });
+    });
+  }
+
+  if (!nalezy.length) {
+    console.log(`Nothing in the archive touched ${cesta}.`);
+    console.log('The archive only goes back as far as it was first run.');
+    return;
+  }
+
+  // Jedna relácia mohla ten súbor otvoriť dvadsaťkrát; zaujíma prvý raz,
+  // lebo tam sa o ňom hovorilo, a počet, lebo ten hovorí o váhe.
+  const podlaRelacie = new Map();
+  for (const x of nalezy) {
+    const m = podlaRelacie.get(x.subor);
+    if (m) m.krat++;
+    else podlaRelacie.set(x.subor, { ...x, krat: 1 });
+  }
+
+  for (const x of [...podlaRelacie.values()].slice(-n)) {
+    console.log(`${x.subor}:${x.riadok}  (${x.krat}x)\n   ${x.text}\n`);
+  }
+  console.log(`${podlaRelacie.size} session(s). Open a line range to see what was said.`);
+}
+
 function hladaj(vyraz, n = 8) {
   if (!existsSync(INDEX)) { console.error('No index. Build it first: --index'); process.exit(1); }
   const db = new DatabaseSync(INDEX);
@@ -135,5 +197,10 @@ if (arg[0] === '--index') {
   // nevidel.
   postavIndex(arg.slice(1).find((a) => !a.startsWith('--')) || ARCHIVE);
 }
-else if (!arg.length) console.log('Usage: search.mjs --index | "query" [--n 8]');
+else if (arg[0] === '--file') {
+  const c = arg.slice(1).find((a) => !a.startsWith('--'));
+  if (!c) { console.error('Usage: search.mjs --file <path>'); process.exit(1); }
+  podlaSuboru(c, Number(arg[arg.indexOf('--n') + 1]) || 8);
+}
+else if (!arg.length) console.log('Usage: search.mjs --index | --file <path> | "query" [--n 8]');
 else hladaj(arg.filter((a) => !a.startsWith('--') && a !== arg[arg.indexOf('--n') + 1]).join(' '), Number(arg[arg.indexOf('--n') + 1]) || 8);
