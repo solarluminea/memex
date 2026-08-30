@@ -14,8 +14,15 @@
  * Slovenčina:
  *   · Text sa indexuje **dvakrát** — raz s diakritikou, raz bez nej. Bez toho
  *     „ziadost" a „žiadosť" sú dve rôzne slová a človek, ktorý píše rýchlo,
- *     nenájde nič. Unicode61 s `remove_diacritics` rieši len časť; `ľ`, `ô`
- *     a `ĺ` mu prejdú.
+ *     nenájde nič.
+ *
+ *     ⚠️ Dôvod, ktorý tu stál pôvodne — že `unicode61 remove_diacritics`
+ *     nezvládne `ľ`, `ô` a `ĺ` — **neplatí**. Preverené 31. 8. 2026 na SQLite
+ *     3.53.3: `remove_diacritics 1` aj `2` nájdu všetky štyri tvary. Buď to
+ *     bola staršia verzia, alebo omyl. Dvojitá indexácia teda rieši niečo,
+ *     čo tokenizer vie sám, a dá sa zjednodušiť — nechávam ju len preto, že
+ *     funguje a zmena by znamenala prestavať index. Kto sa toho chytí, nech
+ *     najprv zopakuje ten pokus na svojej verzii SQLite.
  *   · `\b` sa v hľadaní nepoužíva vôbec. V JavaScripte je ASCII, takže hranica
  *     slova za „ž" neexistuje a filter ticho prepadne. Namerané trikrát za deň.
  *

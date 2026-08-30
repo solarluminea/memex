@@ -183,7 +183,13 @@ function labels(source) {
     // what someone asks about when they say "move the power column".
     for (const m of l.matchAll(/\bheader\s*[:=]\s*'([^'\n]{3,34})'/g)) add(m[1], 4, i);
     // Where a label otherwise lives: a field label, a title, a placeholder.
-    for (const m of l.matchAll(/\b(?:label|title|placeholder|name|nazov|popis)\s*[:=]\s*'([^'\n]{3,34})'/g)) add(m[1], 3, i);
+    //
+    // The accented spellings are not decoration. A codebase written in the
+    // language of its interface names the field `názov:`, and `\b(?:nazov)`
+    // never matches it — `\b` in JavaScript is ASCII, so the boundary a Slovak
+    // word needs is not there. Measured on a real project: `názov:` appears
+    // six times and `hlavička:` once, all of them invisible until now.
+    for (const m of l.matchAll(/\b(?:label|title|placeholder|name|nazov|názov|popis|titulok|hlavicka|hlavička)\s*[:=]\s*'([^'\n]{3,34})'/gu)) add(m[1], 3, i);
     for (const m of l.matchAll(/\b(?:title|label|placeholder|aria-label|alt)="([^"\n]{3,34})"/g)) add(m[1], 3, i);
     // Text sitting directly in the markup — what is on the screen.
     for (const m of l.matchAll(/>\s*([^<>{}\n]{3,34}?)\s*</g)) add(m[1], 2, i);
@@ -308,15 +314,48 @@ if (argv[0] === 'find') {
     console.error('Usage: node memex/scripts/map.mjs find <word>');
     process.exit(1);
   }
-  // Hľadá sa aj v ceste, nie len v popise — názov súboru je popis sám o sebe.
-  // A bez diakritiky na oboch stranách, aby „ponuka" našlo „Ponúk".
-  const hits = map.modules.filter((m) => undiacritic(`${m.path} ${m.description ?? ''}`).includes(word));
-  for (const m of hits.slice(0, 40)) console.log(`${m.path} — ${m.description ?? '—'}`);
-  console.log(
-    hits.length === 0
-      ? 'Nothing. Try grep, or the archive: node memex/scripts/search.mjs "words"'
-      : `\n${hits.length} modules${hits.length > 40 ? ' (40 shown)' : ''}.`,
-  );
+  /*
+    Hľadá sa aj v ceste, nie len v popise — názov súboru je popis sám o sebe.
+    A bez diakritiky na oboch stranách, aby „ponuka" našlo „Ponúk".
+
+    Zoradenie, nie len filter. Široké slovo vráti desiatky modulov — namerané:
+    „pripad" 42, „faktura" 29 — a nezoradený zoznam núti čitateľa prejsť
+    všetky. Skóre je zámerne hlúpe: kde sa slovo našlo, váži viac než koľkokrát.
+    Názov súboru je najsilnejší signál, lebo ho písal človek s úmyslom.
+  */
+  const score = (m) => {
+    const file = undiacritic(basename(m.path));
+    const dir = undiacritic(dirname(m.path));
+    const desc = undiacritic(m.description ?? '');
+    const where =
+      (file.includes(word) ? 4 : 0) + (dir.includes(word) ? 2 : 0) + (desc.includes(word) ? 1 : 0);
+    if (!where) return 0;
+    /*
+      Rozhodnutie pri remíze: koľko z názvu tvorí hľadané slovo.
+
+      Bez toho vyhrá abeceda a na „pripad" vyjde osem overovacích skriptov
+      pred `PripadyTabulka.tsx` — všetky majú to slovo v názve, tak majú
+      rovnaké skóre. Podiel je hrubý, ale hovorí to, čo treba: v `Pripady…`
+      je prípad témou súboru, v `overenie_cisel_pripadu` je len upresnením.
+      Zlomok, aby nikdy neprebil to, KDE sa slovo našlo.
+    */
+    return where + word.length / (file.length + 1);
+  };
+  const all = map.modules.map((m) => ({ ...m, score: score(m) })).filter((m) => m.score > 0);
+  all.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+
+  // Orezané, lebo cieľom je otvoriť súbor, nie prečítať zoznam. `--all` je pre
+  // prípad, keď hľadaný pojem je naozaj roztrúsený a treba vidieť rozsah.
+  const LIMIT = 12;
+  const shown = argv.includes('--all') ? all : all.slice(0, LIMIT);
+  for (const m of shown) console.log(`${m.path} — ${m.description ?? '—'}`);
+  if (!all.length) {
+    console.log('Nothing. Try grep, or the archive: node memex/scripts/search.mjs "words"');
+  } else if (all.length > shown.length) {
+    console.log(`\n${shown.length} of ${all.length} modules, best match first. All of them: --all`);
+  } else {
+    console.log(`\n${all.length} modules.`);
+  }
   process.exit(0);
 }
 
