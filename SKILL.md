@@ -105,8 +105,8 @@ cue, not a defect.
 | after new sessions pile up | `/memex:distill` |
 | "how's the memory doing?" | `/memex:status` |
 
-A SessionEnd hook runs the archiver and rebuilds the map, so neither can be
-forgotten. The map costs no tokens to rebuild — it is a script, not a model.
+A SessionEnd hook runs the archiver, refreshes the full-text index and rebuilds
+the map, so none of them can be forgotten. The map costs no tokens to rebuild — it is a script, not a model.
 
 ## Answering a question from the past
 

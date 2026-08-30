@@ -35,10 +35,15 @@ import { join, basename } from 'node:path';
 // node:sqlite landed in Node 22.5 and stabilised in 24. Without this guard the
 // failure is a bare "Cannot find module 'node:sqlite'", which reads like a
 // broken install rather than an old runtime.
+const TICHO = process.argv.includes('--quiet');
 let DatabaseSync;
 try {
   ({ DatabaseSync } = await import('node:sqlite'));
 } catch {
+  // Ticho a s nulou, keď to volá hook. Starý Node je stav, nie porucha — a hook,
+  // ktorý pri každom zatvorení okna zakričí o niečom, čo používateľ práve
+  // nerieši, sa naučí prehliadať aj vtedy, keď povie niečo dôležité.
+  if (TICHO) process.exit(0);
   console.error(`Full-text search needs Node 22.5 or newer for node:sqlite (you have ${process.version}).`);
   console.error('Everything else in memex works without it — the archive and the trail are plain files.');
   process.exit(1);
@@ -96,7 +101,7 @@ function postavIndex(priecinok = ARCHIVE) {
     suborov++;
   }
   db.close();
-  console.log(`Index: ${spolu} chunks from ${suborov} transcripts -> ${cesta}`);
+  if (!TICHO) console.log(`Index: ${spolu} chunks from ${suborov} transcripts -> ${cesta}`);
 }
 
 function hladaj(vyraz, n = 8) {
@@ -122,6 +127,13 @@ function hladaj(vyraz, n = 8) {
 }
 
 const arg = process.argv.slice(2);
-if (arg[0] === '--index') { mkdirSync(ARCHIVE, { recursive: true }); postavIndex(arg[1] || ARCHIVE); }
+if (arg[0] === '--index') {
+  mkdirSync(ARCHIVE, { recursive: true });
+  // Prvý argument, ktorý nie je prepínač. `arg[1]` samo o sebe nestačí: pri
+  // `--index --quiet` z hooku by sa za priečinok vzalo `--quiet` a index by
+  // sa staval do cesty, ktorá neexistuje — a v tichom režime by to nikto
+  // nevidel.
+  postavIndex(arg.slice(1).find((a) => !a.startsWith('--')) || ARCHIVE);
+}
 else if (!arg.length) console.log('Usage: search.mjs --index | "query" [--n 8]');
 else hladaj(arg.filter((a) => !a.startsWith('--') && a !== arg[arg.indexOf('--n') + 1]).join(' '), Number(arg[arg.indexOf('--n') + 1]) || 8);

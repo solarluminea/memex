@@ -145,8 +145,9 @@ by one and not the other.
 | `/memex:distill` | build the trail (batch job, tens of minutes) |
 | `/memex:status` | health: what's archived, indexed, uncovered |
 
-A SessionEnd hook runs the archiver and rebuilds the map, so neither can be
-forgotten. Always-on cost is about **310 tokens** per session; everything else
+A SessionEnd hook runs the archiver, refreshes the full-text index and rebuilds
+the map, so none of them can be forgotten — without the index step the first
+search of a fresh install answers `No index` and costs a whole turn to fix. Always-on cost is about **310 tokens** per session; everything else
 is paid on use.
 
 ## Configuration

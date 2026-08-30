@@ -237,12 +237,39 @@ function fromInterface(source) {
     return `${text} (${near.value})`;
   });
 
-  let line = terms.join(' · ');
-  while (line.length > MAX_LINE && terms.length > 1) {
+  /*
+    Skúšané a zavrhnuté: dopĺňať kľúče, ktoré nemajú svoj popisok.
+
+    Dôvod znel dobre. `vykonKwp` prestal mať `header: 'Výkon'` v tej chvíli,
+    keď sa výkon v rozhraní presunul k menu — stĺpec v kóde zostal, ale `find
+    kwp` prestalo vracať čokoľvek. Doplniť osirelý kľúč vyzeralo ako oprava.
+
+    Nie je. Kľúčov je v tabuľke pätnásť a nedá sa povedať, ktoré dva z nich
+    niekto bude hľadať; výber „prvé dva v poradí výskytu" pridal do popisu
+    `mesacnaPlatba` a `vykonKwp` netrafil vôbec. Vymenil by teda istý šum za
+    neistý zásah, a to v každom module naraz.
+
+    Na hľadanie reťazca, ktorý nie je popiskom, je grep. `grep -rl kWp src/`
+    vráti ten súbor okamžite a nič nestojí. Mapa má povedať, ktorý súbor
+    otvoriť — nie vedieť všetko.
+  */
+  let text = terms.join(' · ');
+  while (text.length > MAX_LINE && terms.length > 1) {
     terms.pop();
-    line = terms.join(' · ');
+    text = terms.join(' · ');
   }
-  return line;
+  /*
+    Aj riadok, na ktorom prvý popisok stojí.
+
+    Bez neho nájde agent správny súbor a hneď musí grepnúť, kde v ňom tie
+    stĺpce sú — celé jedno kolo volania navyše. S ním prečíta rovno okno okolo
+    toho miesta. Riadok prvého popisku, nie zhody: definícia začína tam
+    a čítať sa aj tak bude blok, nie jeden riadok.
+
+    Pri popise z hlavičkového komentára sa neuvádza — bol by to vždy riadok
+    jedna a to nie je informácia.
+  */
+  return { text, line: found[0].line + 1 };
 }
 
 // ── building the map ───────────────────────────────────────────────────────
@@ -252,15 +279,18 @@ function describe(path) {
   try {
     text = readFileSync(path, 'utf8');
   } catch {
-    return null;
+    return { description: null, line: null };
   }
-  return header(text) ?? (UI.test(path) ? fromInterface(text) : null);
+  const fromHeader = header(text);
+  if (fromHeader) return { description: fromHeader, line: null };
+  const fromUi = UI.test(path) ? fromInterface(text) : null;
+  return fromUi ? { description: fromUi.text, line: fromUi.line } : { description: null, line: null };
 }
 
 function build(files) {
   const modules = files.map((f) => ({
     path: relative(ROOT, f).split(sep).join('/'),
-    description: describe(f),
+    ...describe(f),
   }));
 
   const missing = modules.filter((m) => !m.description).length;
@@ -296,7 +326,7 @@ function build(files) {
       folder = dir;
       out.push('', `**${dir}/**`, '');
     }
-    out.push(`- \`${basename(m.path)}\` — ${m.description ?? '—'}`);
+    out.push(`- \`${basename(m.path)}\`${m.line ? `:${m.line}` : ''} — ${m.description ?? '—'}`);
   }
   out.push('');
   return { text: `${out.join('\n')}\n`, count: modules.length, missing, modules };
@@ -348,7 +378,7 @@ if (argv[0] === 'find') {
   // prípad, keď hľadaný pojem je naozaj roztrúsený a treba vidieť rozsah.
   const LIMIT = 12;
   const shown = argv.includes('--all') ? all : all.slice(0, LIMIT);
-  for (const m of shown) console.log(`${m.path} — ${m.description ?? '—'}`);
+  for (const m of shown) console.log(`${m.path}${m.line ? `:${m.line}` : ''} — ${m.description ?? '—'}`);
   if (!all.length) {
     console.log('Nothing. Try grep, or the archive: node memex/scripts/search.mjs "words"');
   } else if (all.length > shown.length) {
