@@ -9,7 +9,7 @@
     {
       "name": "memex",
       "source": "./",
-      "description": "Project memory and a code map, both built from pointers rather than retellings. Archives session transcripts before Claude Code deletes them, indexes them for full-text search, builds a trail of topics pointing at exact line ranges, and generates a one-line-per-module map of the code that says which file to open."
+      "description": "Project memory, a code map, and telemetry — all built from pointers and counts rather than retellings and hopes. Archives session transcripts before Claude Code deletes them, indexes them for full-text search, builds a trail of topics pointing at exact line ranges, generates a one-line-per-module map of the code, and measures what navigation actually costs per edit."
     }
   ]
 }
