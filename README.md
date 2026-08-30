@@ -260,6 +260,14 @@ Funes remembers every leaf of every tree and, as a result, cannot think — he
 has no way to generalise or forget. Remembering everything isn't the goal.
 Knowing where to look is.
 
+## What is not built yet
+
+[ROADMAP.md](ROADMAP.md) lists every idea that was proposed and postponed, each
+with the **measurable condition** that would make it worth building — index
+slower than three seconds, trail past 30k tokens, median file past 400 lines.
+It also records what was decided against and why, so those ideas do not come
+back around every few months.
+
 ## Licence
 
 MIT.
