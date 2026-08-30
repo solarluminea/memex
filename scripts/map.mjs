@@ -258,12 +258,25 @@ function build(files) {
   }));
 
   const missing = modules.filter((m) => !m.description).length;
+  const kTokens = Math.round((modules.length * 80) / 3 / 1000);
   const out = [
     '# Code map',
     '',
     `${modules.length} modules, ${missing} without a description. **Generated** —`,
     'the source is the code itself, not this file.',
-    'Rebuild: `node memex/scripts/map.mjs`. Find: `node memex/scripts/map.mjs find <word>`.',
+    '',
+    // The whole point is a cheap lookup, and reading the file defeats it. On a
+    // real project this file is ~34k tokens while one lookup is ~50 — so the
+    // warning goes first, in the words an agent is most likely to act on.
+    `⛔ **Do not read this file.** It is roughly ${kTokens}k tokens; one lookup is`,
+    'under a hundred. Run this instead, and read only what it prints:',
+    '',
+    '```',
+    'node memex/scripts/map.mjs find <word>',
+    '```',
+    '',
+    'Rebuild with no argument. The lookup ignores case and diacritics, and',
+    'searches the paths as well as the descriptions.',
     '',
     '⚠️ The map says **which file to open** — not what is in it. Inferring the',
     'contents from one line is exactly the mistake that costs a day of rework.',
