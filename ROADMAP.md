@@ -516,6 +516,38 @@ filters the list itself rather than putting it in a context window.
 
 ---
 
+### Weighting a hidden term by how often it appears
+
+Hidden terms are yes/no. A term appearing forty times in a file is what the
+file is about; a term appearing once is a mention. Doubling the weight above a
+frequency threshold: 3 → 0.578, 5 → 0.563, 10 → 0.568, 20 → 0.571, against
+0.572 for the flat version. The best of those is inside the noise and the rest
+are worse.
+
+**Trigger:** none proposed. Rarity across files already does the work that
+frequency within a file was supposed to add.
+
+### Files that change together
+
+Co-change coupling from git: if a query lands on one file, its frequent
+co-committed siblings are probably relevant too. A real technique, and it can
+be measured without leaking the answer by learning only from commits **older**
+than the evaluated ones.
+
+Learned from 330 older commits: 2096 co-changed pairs, of which 58 are strong
+enough to mean anything (three or more shared commits, and at least a third of
+either file's changes). That covers 59 files of 1304.
+
+The upper bound was measured before building anything: of the 55 tasks the map
+currently fails, coupling would reach the right file in **one**. 0.3 % of the
+set, for a git dependency in the map and a scoring branch.
+
+**Trigger:** a repository with a much longer history — the coupling table is
+thin because only 330 commits were available to learn from. Re-run the
+upper-bound check first; it costs one script and no implementation.
+
+---
+
 ## How to use this file
 
 When an idea arrives that is already here, the answer is the trigger, not a

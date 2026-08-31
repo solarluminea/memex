@@ -126,9 +126,7 @@ function postavIndex(priecinok = ARCHIVE) {
   */
   if (existsSync(cesta)) rmSync(cesta, { force: true });
   const db = new DatabaseSync(cesta);
-  db.exec(`CREATE VIRTUAL TABLE useky USING fts5(
-    subor UNINDEXED, od UNINDEXED, doo UNINDEXED, text,
-    tokenize='unicode61 remove_diacritics 2')`);
+  db.exec(SCHEMA);
 
   const vloz = db.prepare('INSERT INTO useky (subor, od, doo, text) VALUES (?, ?, ?, ?)');
   let spolu = 0, suborov = 0;
@@ -273,9 +271,43 @@ function podlaSuboru(cesta, n = 8) {
   console.log(`${podlaRelacie.size} session(s), oldest first. Open a line range to see what was said.`);
 }
 
+/*
+  Schéma indexu, na jednom mieste — aby sa dala aj overiť, nielen vytvoriť.
+
+  Index je odvodený súbor a môže doň písať aj niekto iný. Namerané na
+  skutočnom projekte: mal vlastný `scripts/pamat_hladanie.mjs`, staršiu podobu
+  tohto kódu, ktorá píše do toho istého `.hladanie.db` so stĺpcom `bez` a
+  tokenizérom bez skladania diakritiky. `npm run pamat:index` tým prepísal
+  index a **nič nespadlo** — dotazy fungovali ďalej, len nad starou schémou:
+  bez skladania diakritiky, s úsekmi 2000 znakov a s prekryvom, o ktorom už
+  vieme, že ukazuje vedľa.
+
+  Ticho horšie výsledky sú horšie než hlásená chyba. Preto sa schéma pri
+  otvorení porovná a keď nesedí, index sa postaví nanovo — je to sekunda a
+  správna odpoveď.
+*/
+const SCHEMA = `CREATE VIRTUAL TABLE useky USING fts5(
+    subor UNINDEXED, od UNINDEXED, doo UNINDEXED, text,
+    tokenize='unicode61 remove_diacritics 2')`;
+
+function sediSchema(db) {
+  try {
+    const r = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='useky'").get();
+    return String(r?.sql ?? '').replace(/\s+/g, ' ').trim() === SCHEMA.replace(/\s+/g, ' ').trim();
+  } catch {
+    return false;
+  }
+}
+
 function hladaj(vyraz, n = 8) {
   if (!existsSync(INDEX)) { console.error('No index. Build it first: --index'); process.exit(1); }
-  const db = new DatabaseSync(INDEX);
+  let db = new DatabaseSync(INDEX);
+  if (!sediSchema(db)) {
+    db.close();
+    if (!TICHO) console.error('The index was written by something else — rebuilding it.');
+    postavIndex();
+    db = new DatabaseSync(INDEX);
+  }
   // Diakritiku skladá tokenizer na oboch stranách, takže dotaz je jedna vetva.
   const slova = vyraz.trim().split(/\s+/).filter(Boolean);
   /*
@@ -415,4 +447,27 @@ else if (arg[0] === '--osnova') {
   }
 }
 else if (!arg.length) console.log('Usage: search.mjs --index | --file <path> | --osnova [transcript] | "query" [--n 8]');
-else hladaj(arg.filter((a) => !a.startsWith('--') && a !== arg[arg.indexOf('--n') + 1]).join(' '), Number(arg[arg.indexOf('--n') + 1]) || 8);
+else {
+  /*
+    `--n` sa hľadá raz a jeho index sa overí.
+
+    Tu stálo `arg.indexOf('--n') + 1` na dvoch miestach naraz. Keď `--n` v
+    príkaze nie je, `indexOf` vráti −1, takže sa za jeho hodnotu vzal `arg[0]`
+    — a to je celý dotaz. Ten sa potom z dotazu odfiltroval.
+
+    Následok: `search.mjs "žiadosť"` nevrátilo nič a ohlásilo chybu syntaxe
+    FTS5 nad prázdnym výrazom. Nešlo o jednoslovné dotazy, ako sa zdalo —
+    nefungoval **žiadny** dotaz bez `--n`, čiže presne ten tvar, ktorý je
+    napísaný v nápovede. Chyba prežila, lebo každý test bol písaný s `--n`.
+  */
+  const iN = arg.indexOf('--n');
+  const pocet = iN > -1 ? Number(arg[iN + 1]) || 8 : 8;
+  const vyraz = arg
+    .filter((a, i) => !a.startsWith('--') && !(iN > -1 && i === iN + 1))
+    .join(' ');
+  if (!vyraz.trim()) {
+    console.error('Nothing to search for. Usage: search.mjs "query" [--n 8]');
+    process.exit(1);
+  }
+  hladaj(vyraz, pocet);
+}

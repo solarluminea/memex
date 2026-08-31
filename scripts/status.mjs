@@ -47,7 +47,19 @@ function entries() {
       file: f,
       date: h[1],
       heading: h[2].trim(),
-      pointers: [...t.matchAll(/\]\(([^)#]+)#L(\d+)-L(\d+)\)/g)].map((m) => ({ path: m[1], from: +m[2], to: +m[3] })),
+      /*
+        Kotva smie byť rozsah aj jediný riadok.
+
+        Počítal sa len tvar `#L12-L34`. Záznam s kotvou `#L12` sa tým nerátal
+        medzi ukazovatele vôbec — prepis, ktorý spracovaný bol, sa hlásil ako
+        nespracovaný a destilátor sa naň posielal znova. Zlyhanie, ktoré vyzerá
+        ako práca navyše, nie ako chyba.
+
+        Jednoriadková kotva je legitímna: niekedy je to jedna veta a rozsah
+        `#L12-L12` je len horšie napísané to isté.
+      */
+      pointers: [...t.matchAll(/\]\(([^)#]+)#L(\d+)(?:-L(\d+))?\)/g)]
+        .map((m) => ({ path: m[1], from: +m[2], to: +(m[3] ?? m[2]) })),
       expired: /^Valid until:/m.test(t),
     });
   }
@@ -123,15 +135,34 @@ if (z.some((x) => x.expired)) console.log(`           ${z.filter((x) => x.expire
 // A pointer into nothing is worse than a missing one — it sends the reader
 // away and they don't come back.
 let broken = 0, past = 0;
+const chybne = new Map();
 for (const x of z) {
   for (const p of x.pointers) {
     const c = join(TRAIL, p.path);
-    if (!existsSync(c)) { broken++; continue; }
-    if (p.to > readFileSync(c, 'utf8').split('\n').length) past++;
+    if (!existsSync(c)) { broken++; chybne.set(x.file, (chybne.get(x.file) ?? 0) + 1); continue; }
+    if (p.to > readFileSync(c, 'utf8').split('\n').length) {
+      past++;
+      chybne.set(x.file, (chybne.get(x.file) ?? 0) + 1);
+    }
   }
 }
 if (broken) console.log(`! ${broken} pointers reference a transcript that does not exist`);
 if (past) console.log(`! ${past} pointers reference lines past the end of the transcript`);
+/*
+  Ktoré záznamy, nie koľko ukazovateľov.
+
+  „16 rozbitých" sa nedá opraviť — kým sa nevie, ktorých deviatich záznamov sa
+  to týka. A opraviť ich musí človek alebo destilátor: ukazovateľ zámerne
+  neobsahuje text, len nadpis, takže sám sa preložiť inam nevie a hádať by
+  znamenalo vymeniť hlasnú chybu za tichú.
+*/
+if (chybne.size) {
+  console.log(`  in ${chybne.size} entries — redistil these:`);
+  for (const [f, n] of [...chybne].sort((a, b) => b[1] - a[1]).slice(0, 10)) {
+    console.log(`   ${f}${n > 1 ? `  (${n})` : ''}`);
+  }
+  if (chybne.size > 10) console.log(`   … and ${chybne.size - 10} more`);
+}
 
 // A transcript with no trail entry at all is a hole in the memory — exactly
 // what the measurement showed as the difference between 55% and 100%.
