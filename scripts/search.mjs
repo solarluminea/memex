@@ -32,6 +32,7 @@
  */
 import { readFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import { execFileSync } from 'node:child_process';
 // node:sqlite landed in Node 22.5 and stabilised in 24. Without this guard the
 // failure is a bare "Cannot find module 'node:sqlite'", which reads like a
 // broken install rather than an old runtime.
@@ -105,6 +106,38 @@ function postavIndex(priecinok = ARCHIVE) {
 }
 
 /**
+ * Names this file used to have, from git.
+ *
+ * A path is not a stable identity. Measured on a real project: 24 renames in
+ * 300 commits, including a whole folder moving from `src/app/vykup/` to
+ * `src/components/sprostredkovanie/`. Everything said about those files before
+ * the move is written in the archive under the old path, and a lookup by the
+ * new one silently returns a fraction of the history — the worst kind of wrong,
+ * because it looks like an answer.
+ *
+ * Failing quietly is deliberate: no git, no repository, or a file that was
+ * never committed are all ordinary, and none of them should turn a search into
+ * an error.
+ */
+function staréNázvy(cesta) {
+  try {
+    const out = execFileSync(
+      'git',
+      ['log', '--follow', '--diff-filter=R', '--name-status', '--format=', '--', cesta],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 24 },
+    );
+    const mená = new Set();
+    for (const r of out.split('\n')) {
+      const m = /^R\d*\t(.+?)\t(.+)$/.exec(r);
+      if (m) mená.add(m[1]);
+    }
+    return [...mená];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Which sessions touched this file, and where in them.
  *
  * The archive records a summary of every tool call, so a path that was edited
@@ -122,7 +155,12 @@ function postavIndex(priecinok = ARCHIVE) {
  * about the other.
  */
 function podlaSuboru(cesta, n = 8) {
-  const hladane = cesta.replace(/\\/g, '/').toLowerCase().replace(/^.*?(?=src\/|scripts\/|lib\/|app\/)/, '');
+  const orez = (c) => c.replace(/\\/g, '/').toLowerCase().replace(/^.*?(?=src\/|scripts\/|lib\/|app\/)/, '');
+  const staré = staréNázvy(cesta);
+  const hladane = [orez(cesta), ...staré.map(orez)].filter((v, i, a) => v && a.indexOf(v) === i);
+  if (staré.length) {
+    console.log(`Also searching former path(s): ${staré.join(', ')}\n`);
+  }
   const nalezy = [];
 
   for (const f of readdirSync(ARCHIVE).sort()) {
@@ -130,8 +168,10 @@ function podlaSuboru(cesta, n = 8) {
     const riadky = readFileSync(join(ARCHIVE, f), 'utf8').split('\n');
     riadky.forEach((r, i) => {
       if (!r.includes('[Tool:') && !r.includes('[Nástroj:')) return;
-      const kde = r.replace(/\\/g, '/').toLowerCase().indexOf(hladane);
-      if (kde < 0) return;
+      const norm = r.replace(/\\/g, '/').toLowerCase();
+      const vzor = hladane.find((h) => norm.includes(h));
+      if (!vzor) return;
+      const kde = norm.indexOf(vzor);
       /*
         Výrez okolo zhody, nie prvých sto znakov.
 
@@ -140,7 +180,7 @@ function podlaSuboru(cesta, n = 8) {
         slovo nie je, a nález vyzerá ako omyl nástroja.
       */
       const od = Math.max(0, kde - 30);
-      const text = (od ? '…' : '') + r.trim().slice(od, kde + hladane.length + 40) + '…';
+      const text = (od ? '…' : '') + r.trim().slice(od, kde + vzor.length + 40) + '…';
       nalezy.push({ subor: f, riadok: i + 1, text });
     });
   }

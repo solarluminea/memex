@@ -136,6 +136,28 @@ edits to other files shortly after, i.e. regressions being chased.
 dynamic imports, and a wrong impact list is worse than none. TypeScript's own
 typecheck already catches interface breaks.
 
+### Files that change together
+
+Counting how often two files appear in the same commit, and showing the strong
+pairs beside a lookup. It answers the same question as the import index — "what
+else does this touch" — from history rather than from parsing, which cannot be
+wrong about aliases or re-exports.
+
+Measured on 400 commits of a real project: **68 strong pairs out of 6 890**
+(four or more shared commits and a 60 % overlap). The pairs are sensible —
+a component with its logic module, a module with its test, a schema with its
+data layer.
+
+**Trigger:** the same one as the import index — telemetry showing edits
+clustering, i.e. regressions being chased. Build **this** rather than the
+import graph if it comes to that: git history is a fact, a regex over imports
+is a guess.
+
+**Cost to weigh:** 1 % of pairs are strong, so most files gain nothing, and
+most of the strong ones are already obvious from the filename (`x.ts` with
+`x.test.ts`). Big commits have to be excluded or everything correlates with
+`package-lock.json`.
+
 ### Slicing a file to one function
 
 `Read` with `offset`/`limit` already does this when the range is known.
@@ -218,6 +240,28 @@ table `deals`). Same objection as the glossary: a third list nothing
 generates. The generated version of this idea is the reverse import index,
 listed above with its trigger.
 
+**Tracing UI → action → database automatically.** Presented as showing the
+whole vertical slice in four lines. To do it correctly needs a call graph, which
+needs an AST parser, which is the thing this plugin does not have and Serena
+does better. A regex approximation would be right most of the time, and a trace
+that is right most of the time is worse than none: it is confidently wrong in
+exactly the cases nobody checks.
+
+**Inferring where new code should go.** The idea is to answer "where does an
+invoice exporter belong" from the shape of the repository. Conventions worth
+following are usually already written down — this project states them in
+`CLAUDE.md` in four lines — and inferring them from folder layout produces a
+confident answer with nothing behind it. A convention a human wrote is a
+decision; one a script guessed is a coincidence.
+
+**Automatically extracting rules from corrections.** Watching for "no, in this
+project we do X" and turning it into a permanent rule injected into every
+session. Two problems and both are bad: most corrections are local ("not in
+this file"), so promoting them to global produces rules that are wrong in most
+places they now apply; and nothing deletes them, so a mistaken rule outlives
+everyone who remembers where it came from. `CLAUDE.md` does this already, and
+the fact that a person writes it is the feature, not the friction.
+
 **Embeddings or a vector index.** On questions deliberately worded to share no
 word with the stored entry — the case embeddings exist for — a plain index over
 a greppable archive scored 6/6, the same as a vector one. Do not revisit this
@@ -232,6 +276,13 @@ of every tool call, so an edited path is written in it verbatim — measured, 35
 of 37 transcripts carry them. That made the planned git-blame route
 unnecessary: no commit trailers, no joining on dates, and it works on history
 that already exists.
+
+**Renamed files** (`search.mjs --file`). A path is not a stable identity:
+measured, 24 renames in 300 commits, including a whole folder moving from
+`src/app/vykup/` to `src/components/sprostredkovanie/`. The lookup now asks git
+for former names and searches under those too. Before the fix it returned a
+fraction of the history and looked like a complete answer, which is the worst
+way to be wrong.
 
 ---
 
