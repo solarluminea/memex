@@ -90,8 +90,25 @@ function odpovede(dotazy) {
   }));
 }
 
-/** Zásah sa počíta na názov súboru — cesta sa v histórii mohla presunúť. */
-const zasah = (cesta, subory) => subory.some((s) => cesta === s || cesta.endsWith('/' + s.split('/').pop()));
+/*
+  Čo sa počíta ako zásah: celá cesta.
+
+  Pôvodne stačil názov súboru — s odôvodnením, že cesta sa v histórii mohla
+  presunúť a úloha spred pol roka by inak zlyhala na presťahovaní priečinka.
+  Znie to rozumne a bolo to draho zaplatené: `route.ts` je v tomto projekte
+  248-krát a `page.tsx` 56-krát, takže pri takej úlohe znamenalo „správne"
+  ktorýkoľvek z dvestoštyridsiatich ôsmich.
+
+  Overené na 958 gólových súboroch: **97,7 % z nich leží dodnes na tej istej
+  ceste** a názov inde má 0,7 %. Zhovievavosť teda kryla sedem prípadov zo
+  938 a za to nafukovala výsledok o 17 % pri vete a 31 % pri jednom slove.
+
+  `BENCH_LENIENT=1` vráti staré správanie, keby bolo treba porovnať so
+  staršími číslami. Predvolené je prísne, lebo tak je to pravda.
+*/
+const LENIENT = process.env.BENCH_LENIENT === '1';
+const zasah = (cesta, subory) =>
+  subory.some((s) => cesta === s || (LENIENT && cesta.endsWith('/' + s.split('/').pop())));
 
 function recall(sada) {
   const vys = odpovede(sada.flatMap((u) => u.slova));

@@ -87,7 +87,7 @@ A module's description comes from the first of three sources that yields one:
 4. **An abbreviation, where it lives.** `kWp`, `IBAN`, `XML` are how people ask
    and never how a screen reads. An abbreviation is appended to the three files
    that use it most, and nowhere else: `kwh` is in 132 files, and naming all of
-   them answers nothing. Measured: this is worth 13 points of recall on
+   them answers nothing. Measured: this is worth 13 points of R@12 on
    abbreviation queries and changes nothing on the rest.
 5. **Nothing.** A dash — a work list, not an error.
 

@@ -285,77 +285,79 @@ changed are the correct answer: *"Power belongs next to the name, offer button
 right after"* → `DealsTable.tsx`. Nobody wrote those for this test, so they cannot
 be tuned to what the map happens to know.
 
-### Recall, over 300 real commits
+### First, the number that was wrong
 
-| | R@1 | R@3 | R@12 | MRR | found nothing |
-|---|---|---|---|---|---|
-| **full map** | 37.0 % | 50.3 % | 65.0 % | **0.455** | 35.0 % |
-| without stem fallback | 34.0 % | 46.3 % | 58.3 % | 0.414 | 41.7 % |
-| without schema seeds | 36.0 % | 50.3 % | 64.3 % | 0.449 | 35.7 % |
-| without ranking | 36.3 % | 50.7 % | 63.0 % | 0.451 | 37.0 % |
-| without abbreviations | 37.0 % | 50.3 % | 65.0 % | 0.455 | 35.0 % |
-| nothing but exact match | 33.3 % | 45.7 % | 55.7 % | 0.407 | 44.3 % |
+A hit used to count when the **filename** matched, on the reasoning that files
+get moved and an old task should not fail over a renamed folder. It sounds
+careful. It was worth 17–31 %.
 
-- **Stem fallback is the clear win.** Removing it costs 9.3 points of recall and
-  raises "found nothing" from 35 % to 42 %. This is the case embeddings are
-  usually bought for, and here it is a `slice`.
-- **Schema seeds and ranking are small**: 0.006 and 0.004 of MRR. Ranking earns
-  its keep on "found nothing" (37 % → 35 %) rather than on position.
-- **Abbreviations do nothing here** — and that turned out to be a fact about the
-  test, not the feature.
+`route.ts` exists 248 times in this repository and `page.tsx` 56 times; 27 % of
+files do not have a unique name. For any task whose answer was a `route.ts`,
+"correct" meant any one of 248. Checking the excuse: of 958 answer files,
+**97.7 % are still at the exact path** the commit recorded and 0.7 % have their
+name somewhere else. Leniency was covering seven cases out of 938.
+
+| | lenient (old) | strict (now) |
+|---|---|---|
+| sentence query, MRR | 0.445 | **0.379** |
+| single-word query, MRR | 0.267 | **0.204** |
+
+Everything below is the strict number. `BENCH_LENIENT=1` brings the old
+behaviour back for comparison with older write-ups.
 
 ### Ask it in a sentence, not a word
 
-The table above gives each task up to five separate single-word queries and
-keeps the best. Nobody gets five tries. Measured on the same 300 tasks, one
-query each:
+The map used to match the query as one literal string, so **every multi-word
+question returned nothing** — 300 of 300. That was invisible for months,
+because the benchmark fed the map one word at a time, which is not how anyone
+asks.
 
-| one query, as a person would type it | R@1 | R@3 | R@12 | MRR |
+| one query, 300 tasks | R@1 | R@3 | R@12 | MRR |
 |---|---|---|---|---|
-| a single word | 18.7 % | 32.0 % | 44.7 % | 0.264 |
-| **the whole sentence** | 35.7 % | 51.0 % | 65.7 % | **0.443** |
+| a single word | 14.7 % | 24.0 % | 35.3 % | 0.204 |
+| **the whole sentence** | 30.7 % | 42.7 % | 56.7 % | **0.379** |
+| five separate single words, best of | 29.3 % | 42.0 % | 56.3 % | 0.374 |
 
-The sentence is worth **68 % more** than the best single word a person is
-likely to pick. Until recently it was worth nothing at all: the map matched
-the query as one literal string, so every multi-word question returned empty —
-300 of 300. The benchmark had never noticed, because it fed the map one word
-at a time.
+The sentence beats **five** separate attempts at guessing the right word. It is
+the largest thing measured on the map so far, and it is a rewrite of the query
+path, not more data in the map.
 
-What makes a sentence work is three things, each measured on its own:
+Three parts make it work, each measured on its own:
 
-| | MRR |
-|---|---|
-| matching the whole phrase literally | 0.000 |
-| each word weighted by how rare it is | 0.351 |
-| + the stem tried per word, not per query | 0.365 |
-| + files that touch more of the question ranked higher | 0.424 |
-| + an exact path segment counted apart from a substring | 0.443 |
+- **Each word weighted by how rare it is.** A word matching a third of the
+  project is dropped by its own weight. This is what removes the need for a
+  stopword list — `pre`, `cez`, `the`, `for` silence themselves, in any language.
+- **The stem tried per word, not per query.** Otherwise one word matching
+  anything stops every other word from being tried in another form, which in a
+  language that inflects is most of them.
+- **Coverage.** A file touching more of the question ranks above a file with one
+  word in its name.
 
-Rarity weighting is what removes the need for a stopword list: a word that
-hits a third of the project is dropped by its own weight, and `pre`, `cez`,
-`the` and `for` need no special-casing in any language.
+### What each part is worth
 
-The last line is the one worth stealing. `zakazky` as a **whole path segment**
-names a screen; `zakazky` inside `PoznamkaZakazky` is a fragment of a name.
-Counting them as the same number is what made "on the Orders screen you see
-orders, not fourteen filters" return `PoznamkaZakazky.tsx`. Splitting them
-moved every mode at once — sentence 0.421 → 0.443, single word 0.251 → 0.264,
-abbreviations 0.270 → 0.372.
+Ablation on the same 300 tasks, sentence queries:
 
-### How a tuning idea gets rejected here
+| | R@1 | R@3 | R@12 | MRR |
+|---|---|---|---|---|
+| **full map** | 30.7 % | 42.7 % | 56.7 % | **0.379** |
+| without multi-word queries | 0.0 % | 0.0 % | 0.0 % | 0.000 |
+| without ranking | 27.0 % | 38.3 % | 56.3 % | 0.352 |
+| without stem fallback | 29.0 % | 40.3 % | 54.7 % | 0.362 |
+| without schema seeds | 30.3 % | 43.0 % | 56.7 % | 0.379 |
+| without abbreviations | 30.7 % | 42.7 % | 56.3 % | 0.379 |
 
-The obvious neighbouring idea — give the description more weight, since it is
-the one part a person wrote — measured **+0.013 MRR** over 300 tasks. It was
-dropped, because splitting the set in half showed +0.020 on one half and
-**0.000** on the other. An improvement that lives in one half of the sample is
-the sample, not an improvement.
+Ranking is worth more here than anywhere else measured (0.027) — with several
+words each contributing candidates, the order is most of the answer. On
+single-word queries the same ablation costs only 0.010.
 
-`BENCH_SKIP=150 BENCH_N=150` exists for exactly this. It costs one extra run
-and it has already killed one change that a single number said to keep.
+Schema seeds and abbreviations do nothing in this mode, and that is expected:
+a commit message rarely names a database column or says `kWp`. Abbreviations
+have their own test, where they are worth 0.073 of MRR over 30 tasks — and
+their story is below, because it is the more useful one.
 
 ### The test that could not test
 
-A query in the table above is a word of six letters or more taken from a commit
+A query in the tables above is a word of six letters or more taken from a commit
 message. `kwp` has three. Measured: **0.0 % of the 1114 queries were an
 abbreviation** — not few, none. A feature the benchmark cannot reach does not
 look ineffective; it looks absent. That is the more dangerous failure, because
@@ -364,11 +366,10 @@ the row is full of numbers and reads like a result.
 So `bench.mjs skratky` asks the same repository the same way, but the query *is*
 the abbreviation, over the 30 commits whose message contains one:
 
-| | R@1 | R@3 | R@12 | MRR | found nothing |
+| | R@1 | R@3 | R@12 | MRR | empty |
 |---|---|---|---|---|---|
-| **full map** | 16.7 % | 33.3 % | 53.3 % | **0.270** | 46.7 % |
-| without abbreviations | 13.3 % | 20.0 % | 40.0 % | 0.198 | 60.0 % |
-| nothing but exact match | 3.3 % | 6.7 % | 36.7 % | 0.106 | 63.3 % |
+| **full map** | 16.7 % | 33.3 % | 36.7 % | **0.242** | 6.7 % |
+| without abbreviations | 13.3 % | 20.0 % | 23.3 % | 0.169 | 16.7 % |
 
 n = 30 is small and the figures should be read as a direction, not a decimal.
 
@@ -401,9 +402,27 @@ word that was asked for, over 829 queries:
 
 The 29 % is not a lie count. A stem match is *meant* to return a different form
 of the word, so literal containment is the wrong test for it — the number that
-matters beside it is the second column. The stem buys 9.3 points of recall and
-pays with roughly twice the list to read, in the 28 % of queries where it fires.
-That is a trade worth making, and now it is a trade with a price on it.
+matters beside it is the second column. The stem buys recall and pays with
+roughly twice the list to read, in the quarter of queries where it fires.
+
+### Two ideas this method rejected
+
+Both looked good on one number and did not survive a second.
+
+**More weight on the description**, since it is the part a person wrote:
++0.013 MRR over 300 tasks. Splitting the set in half gave +0.020 on one half and
+**0.000** on the other. An improvement that lives in one half of the sample is
+the sample. `BENCH_SKIP=150 BENCH_N=150` exists for this.
+
+**Counting an exact path segment apart from a substring** — `zakazky` as a whole
+folder name is a screen, `zakazky` inside `PoznamkaZakazky` is a fragment. This
+measured **+0.022** and read like a genuine find; under strict matching it is
+**+0.003**, which is noise. It is still in the code, because the distinction is
+the more principled one and it costs nothing, but it is not evidence of anything
+and is not counted as a gain.
+
+Both were caught by the measurement, not by review. That is the argument for
+having one.
 
 ### What an answer costs
 
@@ -429,10 +448,12 @@ under a second, run by a hook, never by a model.
 ### Reproducing it
 
 ```
-node memex/scripts/bench.mjs                        # recall, words from commits
-node memex/scripts/bench.mjs skratky                # recall, the query is an abbreviation
+node memex/scripts/bench.mjs veta                   # a whole sentence, one query
+node memex/scripts/bench.mjs                        # words from commits, five tries
+node memex/scripts/bench.mjs skratky                # the query is an abbreviation
 node memex/scripts/bench.mjs pravda                 # do the pointers hold up
-MEMEX_ABLATE=stem node memex/scripts/bench.mjs      # with one part switched off
+MEMEX_ABLATE=stem node memex/scripts/bench.mjs veta # with one part switched off
+BENCH_SKIP=150 BENCH_N=150 node …                   # the other half of the set
 ```
 
 ⚠️ These numbers describe **one repository at one moment**. Run it on yours; the
