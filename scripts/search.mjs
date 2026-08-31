@@ -154,6 +154,22 @@ function staréNázvy(cesta) {
  * Windows paths, the caller says `src/app/…`, and neither should have to know
  * about the other.
  */
+/**
+ * Deň relácie, z frontmatteru prepisu.
+ *
+ * Čítajú sa prvé riadky, nie celý súbor — prepis má stovky kilobajtov a dátum
+ * stojí v prvej päťke. Anglický aj slovenský kľúč, lebo archívy staršie než
+ * plugin nesú `den:`.
+ */
+function denRelacie(nazovSuboru) {
+  try {
+    const hlava = readFileSync(join(ARCHIVE, nazovSuboru), 'utf8').slice(0, 300);
+    return /^(?:date|den):\s*(\d{4}-\d{2}-\d{2})/m.exec(hlava)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function podlaSuboru(cesta, n = 8) {
   const orez = (c) => c.replace(/\\/g, '/').toLowerCase().replace(/^.*?(?=src\/|scripts\/|lib\/|app\/)/, '');
   const staré = staréNázvy(cesta);
@@ -197,13 +213,27 @@ function podlaSuboru(cesta, n = 8) {
   for (const x of nalezy) {
     const m = podlaRelacie.get(x.subor);
     if (m) m.krat++;
-    else podlaRelacie.set(x.subor, { ...x, krat: 1 });
+    else podlaRelacie.set(x.subor, { ...x, krat: 1, den: denRelacie(x.subor) });
   }
 
-  for (const x of [...podlaRelacie.values()].slice(-n)) {
-    console.log(`${x.subor}:${x.riadok}  (${x.krat}x)\n   ${x.text}\n`);
+  /*
+    Chronologicky, nie podľa názvu súboru.
+
+    Otázka nad súborom skoro nikdy neznie „ktoré relácie sa ho dotkli", znie
+    „ako sa vyvíjal". Poradie je pri tom polovica odpovede: prvý záznam je
+    vznik, posledný je terajší stav, a to medzi nimi je dôvod, prečo vyzerá
+    takto. Relácie majú deň vo frontmatteri, takže to nie je odhad.
+
+    Toto je zároveň to, čo sa inde stavia ako „vlákna rozhodnutí" s témami
+    a zlučovaním. Súbor je lepšia os než téma: je jednoznačný a nemá ako sa
+    zliať s iným.
+  */
+  const zoradene = [...podlaRelacie.values()].sort((a, b) => (a.den ?? '').localeCompare(b.den ?? ''));
+
+  for (const x of zoradene.slice(-n)) {
+    console.log(`${x.den ?? '????-??-??'}  ${x.subor}:${x.riadok}  (${x.krat}x)\n   ${x.text}\n`);
   }
-  console.log(`${podlaRelacie.size} session(s). Open a line range to see what was said.`);
+  console.log(`${podlaRelacie.size} session(s), oldest first. Open a line range to see what was said.`);
 }
 
 function hladaj(vyraz, n = 8) {

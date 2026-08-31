@@ -18,7 +18,9 @@ How:
 
 To go the other way — from a file to the conversations that changed it — use
 `node ${CLAUDE_PLUGIN_ROOT}/scripts/search.mjs --file <path>`. The archive
-records every tool call, so an edited path is written in it verbatim; this is
+records every tool call, so an edited path is written in it verbatim. Sessions
+come back oldest first with their dates, so the answer reads as a history of the
+file rather than a list. This is
 the answer to "why does this file look like this" that a commit message cannot
 give.
 

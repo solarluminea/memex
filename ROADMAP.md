@@ -69,6 +69,13 @@ This is the one weakness that measurement actually found: on questions whose
 answer is the join of two entries from different sessions, **every** system
 tested scored 2/6 to 4/6 — pointer, vector, and summary alike.
 
+↳ **A cheaper version of this now exists and covers part of it.**
+`search.mjs --file` lists sessions oldest first with their dates, so "how did
+this file evolve" is answered without threading anything. A file is a better
+axis than a topic: it is unambiguous and cannot merge with another by mistake.
+What it does **not** cover is a decision that spans files — pricing rules living
+in three modules — which is what the entry below is still for.
+
 **Trigger:** `TRAIL.md` passes roughly 30k tokens, so it no longer fits
 comfortably in one read. Check with `wc -c` on it and divide by three.
 
@@ -178,6 +185,24 @@ is a guess.
 most of the strong ones are already obvious from the filename (`x.ts` with
 `x.test.ts`). Big commits have to be excluded or everything correlates with
 `package-lock.json`.
+
+### Shared keys across layers
+
+A field name is a contract: `vykonKwp` appears as a column key in the table, as
+a form field in the action, and as a column in the schema. Listing where one key
+appears gives the vertical slice — UI to database — that a call graph would,
+without a parser, and it cannot be wrong: an identifier either occurs or it does
+not.
+
+Measured: of 121 keys found in the source, **24 span two or more layers and 20
+of those are also columns in the Prisma schema**. The examples are exactly the
+ones you would want — `dealId` across an action, three screens and two logic
+modules; `vykonMenicovKw` across an API route and three screens.
+
+**Trigger:** evidence that finding the other end of a contract costs turns.
+Not built, for one reason: `grep -rl vykonKwp src/` already returns the same
+files. The gap it would close is narrow — knowing **which** keys are worth
+grepping without being told — and that is a list of 24 lines, not a feature.
 
 ### Slicing a file to one function
 
@@ -296,6 +321,27 @@ places they now apply; and nothing deletes them, so a mistaken rule outlives
 everyone who remembers where it came from. `CLAUDE.md` does this already, and
 the fact that a person writes it is the feature, not the friction.
 
+**A tighter output format** (`path|line|desc` instead of `path:line — desc`).
+Measured on a real record: 74 characters against 82, so **10 % shorter** — about
+30 tokens across a twelve-line result. That is not worth a format that a person
+reading the map has to decode. The same measurement kills JSON again at +20 %.
+
+**A linter for the rules in `CLAUDE.md`.** Proposed as the safe version of
+learning rules automatically, and the reframing is right — guard the rules a
+person wrote instead of inventing new ones. But the rules worth guarding are
+prose ("Slovak everywhere", "no hex colours in components"), and turning them
+into machine-checkable patterns means maintaining a second list beside them.
+ESLint exists, is already in most projects, and is better at this.
+
+**A scaffold command** showing the file layout of a similar module. `ls` shows
+the same thing, and grouping the result by role (page, table, actions) needs the
+guessing the idea was meant to avoid.
+
+**Carrying yesterday forward on demand** (`--last`). The always-on objection was
+answered properly: read it only when someone says "continue". What remains is
+that Claude Code has `--continue` and `--resume`, which restore the actual
+conversation rather than a summary of it. Revisit if that stops being true.
+
 **Embeddings or a vector index.** On questions deliberately worded to share no
 word with the stored entry — the case embeddings exist for — a plain index over
 a greppable archive scored 6/6, the same as a vector one. Do not revisit this
@@ -329,6 +375,10 @@ way to be wrong.
 **Stem fallback, abbreviation keys, and failure lines** — all three came out of
 re-reading the rejections above and finding that each had thrown out a good
 idea along with a bad implementation. Details in the entries they belong to.
+
+**File history in date order** (`search.mjs --file`). Sessions now print oldest
+first with the day from the transcript frontmatter, which turns "which sessions
+touched this" into "how did this file evolve" for the cost of one sort.
 
 ---
 
