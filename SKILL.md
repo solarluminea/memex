@@ -109,10 +109,14 @@ exactly the vocabulary they phrase tasks in.
 ⚠️ **The map says which file to open, not what is in it.** Inferring the
 contents from one line is the mistake that costs a day of rework.
 
-⚠️ **Do not try to make it know everything.** Every extra term is another thing
-that can go stale, and a stale map is worse than no map — it sends the reader
-somewhere that no longer exists. When the map comes up empty, that is grep's
-cue, not a defect.
+⚠️ **What it shows and what it searches are two different lists.** A printed
+term is read by a person and can go stale, so the line stays one line and every
+word on it has to earn its place. Behind it the map also matches on distinctive
+identifiers that are never printed — derived from the files, rebuilt every run,
+so they cannot go stale. Measured: that took MRR from 0.374 to 0.535 and
+truthful pointers from 68 % to 93 %, with the output unchanged.
+
+⚠️ When the map comes up empty, that is grep's cue, not a defect.
 
 ## What to run when
 

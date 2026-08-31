@@ -32,9 +32,15 @@
  * the mistake that costs a day of rework.
  *
  * ⚠️ **It does not replace grep either.** The map answers "which file deals
- * with offers"; grep answers "where is this exact string". Do not try to make
- * the map know everything — a stale map is worse than no map, and every extra
- * term is another thing that can go stale.
+ * with offers"; grep answers "where is this exact string".
+ *
+ * ⚠️ **What is displayed and what is searched are two different lists.** A
+ * printed term is read by a person and can go stale, so the line stays one
+ * line and every word on it has to earn its place. The searchable list behind
+ * it is derived from the files at build time, costs no reading, and is rebuilt
+ * in a second — it cannot go stale, so it can be generous. Measured: matching
+ * on distinctive identifiers that are never printed took MRR from 0.374 to
+ * 0.535 and truthful pointers from 68 % to 93 %, with the output unchanged.
  *
  *   memex/scripts/map.mjs               rebuild .memex/MAP.md
  *   memex/scripts/map.mjs find <word>   lines that mention it
@@ -98,6 +104,15 @@ const SKRATKA = new RegExp(`(${SKRATKY.join('|')})`, 'i');
 // Koľko súborov smie skratka označiť. Tri, lebo odpoveďou má byť súbor na
 // otvorenie — nie zoznam. `kwh` je v 132 súboroch a všetky nepomôžu ani jeden.
 const ABBR_TOP = config.abbrevTop ?? 3;
+/*
+  V koľkých súboroch smie skrytý pojem byť, aby ešte rozlišoval.
+
+  Prehľadané na dotazoch celou vetou: 2 → MRR 0,461, 8 → 0,503, 32 → 0,535,
+  64 → 0,536, 300 → 0,540. Plató začína na tridsiatich dvoch a ďalej sa už
+  kupuje R@12 za R@1. Tridsaťdva je teda hranica, kde sa to prestáva
+  oplácať, nie najvyššie číslo v tabuľke.
+*/
+const SKRYTE_MAX = config.hiddenMax ?? 32;
 const skipDirs = new Set([...SKIP_DIR, ...(config.skip ?? [])]);
 
 // ── collecting files ───────────────────────────────────────────────────────
@@ -401,10 +416,21 @@ function build(files) {
   const vSubore = new Map();
   const pocet = new Map();
   const kdeSkratka = new Map();
-  if (polia.size || chceSkratky) {
+  const idSubor = new Map();
+  const idPocet = new Map();
+  const chceSkryte = !ABLATE.has('skryte');
+  if (polia.size || chceSkratky || chceSkryte) {
     for (const f of files) {
       let text;
       try { text = readFileSync(f, 'utf8'); } catch { continue; }
+      if (chceSkryte) {
+        // Identifikátory súboru. Ktoré z nich niečo rozlišujú, sa rozhodne až
+        // potom — dovtedy nie je známe, v koľkých súboroch ktorý je.
+        const vlastne = new Set();
+        for (const m of text.matchAll(/\b[a-zA-Z][a-zA-Z0-9]{5,}\b/g)) vlastne.add(m[0].toLowerCase());
+        idSubor.set(f, vlastne);
+        for (const w of vlastne) idPocet.set(w, (idPocet.get(w) ?? 0) + 1);
+      }
       if (polia.size) {
         const found = identifiers(text, polia);
         if (found.size) {
@@ -454,7 +480,34 @@ function build(files) {
       if (skus.length > MAX_LINE && popis) break;
       popis = skus;
     }
-    return { path: relative(ROOT, f).split(sep).join('/'), ...zaklad, description: popis };
+    /*
+      Skryté pojmy: mapa hľadá viac, než zobrazuje.
+
+      Riadok mapy zostáva jeden — mení sa len to, že sa hľadá aj v pojmoch,
+      ktoré na ňom nestoja. Varovanie „každý pojem navyše je ďalšia vec, čo môže
+      zostarnúť" platí na to, čo sa vypisuje a číta; toto sa stavia znova pri
+      každom behu, takže zostarnúť nemá kedy.
+
+      Vzácny identifikátor rozlišuje: `prebitieZTela` je v troch súboroch a
+      spája ich, `useState` je v tristo a nespája nič. Strop je preto na počte
+      súborov, nie na dĺžke slova.
+
+      Namerané, dotaz celou vetou: MRR 0,374 → 0,535, R@1 30,0 → 44,3 %,
+      R@12 56,7 → 73,7 %. Jedno slovo 0,206 → 0,242 a prázdnych odpovedí z 11,0
+      na 7,0 %. Drží na oboch poloviciach sady (+0,176 a +0,146).
+
+      A pravdivosť ukazovateľov stúpla z 68,1 na 92,9 %: súbor sa teraz nájde
+      preto, že to slovo naozaj obsahuje, nie preto, že sa trafil kmeň. Kmeň sa
+      spúšťa trikrát menej často a práve on bol tá nepresná časť.
+
+      Cena: mapa sa stavia 1,16 s namiesto 1,0 a dotaz zasiahne v priemere 18,8
+      modulov namiesto 7,2. Výpis je aj tak orezaný na dvanásť, takže sa to
+      prejaví len na čísle „z koľkých" a na `--all`.
+    */
+    const skryte = chceSkryte
+      ? [...(idSubor.get(f) ?? [])].filter((w) => (idPocet.get(w) ?? 0) <= SKRYTE_MAX)
+      : [];
+    return { path: relative(ROOT, f).split(sep).join('/'), ...zaklad, description: popis, skryte };
   });
 
   const missing = modules.filter((m) => !m.description).length;
@@ -566,7 +619,10 @@ function lookup(word, { all: showAll = false } = {}) {
     let where =
       (useky.includes(slovo) ? 5 : dir.includes(slovo) ? 2 : 0) +
       (holy === slovo ? 5 : file.includes(slovo) ? 3 : 0) +
-      (desc.includes(slovo) ? 2 : 0);
+      (desc.includes(slovo) ? 2 : 0) +
+      // Najnižšie zo všetkého: skrytý pojem hovorí „toto slovo v tom súbore je",
+      // nie „ten súbor je o tom".
+      (m.skryte?.some((w) => w.includes(slovo)) ? 1 : 0);
     if (!where && akoUrl && bezDynamickych(dir).includes(akoUrl)) where = 1.5;
     if (!where) return 0;
     /*

@@ -333,6 +333,37 @@ Three parts make it work, each measured on its own:
 - **Coverage.** A file touching more of the question ranks above a file with one
   word in its name.
 
+### Search more than you show
+
+The map prints one line per module and that line is read by a person, so every
+word on it has to earn its place — the warning about extra terms going stale is
+about *printed* terms. It had been quietly applied to matching as well, and
+that was the mistake.
+
+The map now also matches on the distinctive identifiers inside each file:
+anything appearing in **32 files or fewer**, which is what makes a word tell
+files apart. `prebitieZTela` is in three files and connects them; `useState` is
+in three hundred and connects nothing. None of it is printed.
+
+| sentence query, 300 tasks | R@1 | R@3 | R@12 | MRR |
+|---|---|---|---|---|
+| printed terms only | 30.0 % | 42.3 % | 56.7 % | 0.374 |
+| **+ hidden terms** | **44.3 %** | **60.0 %** | **73.7 %** | **0.535** |
+
+It is the largest single change measured on the map: **+43 % MRR**, holding on
+both halves of the set (+0.176 and +0.146). Single-word queries go 0.206 →
+0.242 and the abbreviation test stops returning nothing at all.
+
+The second effect matters more than the first. **Truthful pointers went from
+68.1 % to 92.9 %** — a file now comes back because it genuinely contains the
+word, not because a stem guessed near it, and the stem fires a third as often.
+The crude part of the system got quieter by making the precise part reach
+further.
+
+The cost is honest and small: the map takes 1.16 s to build instead of 1.0, and
+a query touches 18.8 modules on average instead of 7.2. The output is still cut
+at twelve lines, so that shows up only in the "of how many" count.
+
 ### What each part is worth
 
 Ablation on the same 300 tasks, sentence queries:

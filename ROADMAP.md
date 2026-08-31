@@ -483,6 +483,39 @@ to a copy and run the benchmark before believing the table that came with it.
 
 ---
 
+### A linguistically correct stem
+
+The stem is a blunt cut: three characters off, four left at minimum. The
+obvious improvement is to strip real Slovak endings instead — `ami`, `ach`,
+`och`, `ou`, `mi`, `ia`.
+
+Measured on sentence queries: the crude cut 0.374, the ending list **0.370**,
+a two-character cut 0.366, and trying progressively shorter cuts 0.369. On
+single-word queries the ending list is worse again (0.199 against 0.206).
+
+The reason is worth keeping: the terms in the map are inflected and compounded
+too, so a *correct* stem lands on a form that may not appear on either side.
+A shorter prefix is more forgiving than a right answer. Linguistic precision
+lost to a `slice`, and it lost on every mode tried.
+
+**Trigger:** none. If someone wants to revisit it, the bar is beating 0.374 on
+`bench.mjs veta` and 0.206 on `BENCH_W=1 bench.mjs`, on both halves.
+
+### A longer list of results
+
+The map prints twelve. Recall keeps climbing past that: R@6 49.0 %, R@12
+56.7 %, R@20 62.0 %, R@30 65.7 %, R@50 73.7 % — but MRR only moves 0.366 →
+0.381 across the whole range, because everything gained sits at ranks nobody
+reaches without reading the twelve above it.
+
+Going from 12 to 20 costs eight lines on **every** query and buys sixteen more
+correct answers over three hundred — about 150 extra lines per answer gained.
+
+**Trigger:** a use where the reader does not pay per line, such as a tool that
+filters the list itself rather than putting it in a context window.
+
+---
+
 ## How to use this file
 
 When an idea arrives that is already here, the answer is the trigger, not a
