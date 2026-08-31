@@ -434,32 +434,55 @@ either of them for a test.
 
 `bench.mjs pamat` queries the archive with the words from each heading and
 checks whether the passage that comes back overlaps the range the entry points
-at. Over 191 topics: **R@1 26.7 %, R@3 43.5 %, MRR 0.355**, 8.4 % returning
-nothing.
+at. Over 202 topics it found four things in a row, and three were defects:
 
-The first thing it found paid for itself. Chunks were indexed **with one
-paragraph of overlap**, so a question-and-answer pair spanning a boundary would
-not be split. It sounded right and was wrong twice over:
+| | MRR | R@8 | lines read per correct answer |
+|---|---|---|---|
+| as shipped before | 0.470 | 55.0 % | 120 |
+| **now** | **0.584** | **75.2 %** | **25** |
 
-- **The pointer lied.** The overlapped text was added to the chunk but the line
-  range was not extended. Measured on a real chunk: 2002 of 4064 characters lay
-  outside the range the chunk reports. A match in that half returned lines that
-  do not contain the highlighted word — the one thing this project claims a
-  pointer cannot do.
-- **It searched worse.** Every paragraph was in the index twice, competing with
-  itself and skewing bm25. Removing it: **MRR 0.299 → 0.360**, and it holds on
-  both halves of the set (+0.036 and +0.089).
+**`AND` was the wrong join.** A query was every word joined with `AND`, so all
+of them had to land in one chunk. `OR` and let bm25 rank — the same idea that
+rewrote the map query — is better at every chunk size tried: MRR 0.396 → 0.584
+at 400 characters, and queries returning nothing went from 11.9 % to **zero**.
+Rarity weighting is already inside bm25; the `AND` was throwing it away.
+
+**Chunks overlapped by one paragraph**, so a question-and-answer pair spanning
+a boundary would not be split. It was wrong twice: the overlapped text was
+added to the chunk but the line range was not extended — 2002 of 4064
+characters of a real chunk lay outside the range it reports, so a match there
+returned lines not containing the highlighted word — and every paragraph being
+indexed twice skewed bm25 against itself.
+
+**Chunk size had never been measured.** It is a real trade, not a right answer:
+
+| characters | MRR | R@8 | lines per correct answer |
+|---|---|---|---|
+| **400** | 0.584 | 75.2 % | **25** |
+| 700 | 0.599 | 78.7 % | 41 |
+| 1200 | 0.601 | 82.2 % | 64 |
+| 2000 | 0.629 | 81.7 % | 102 |
+| 3000 | 0.605 | 82.2 % | 159 |
+
+2000 has the best MRR — 8 % better than 400 — and costs four times the
+reading. For a tool whose whole claim is a cheap pointer that is not a close
+call, so 400 is the default and `chunk` in `memex.json` moves it. MRR alone
+would have picked 2000 and been wrong: a first-place hit pointing at 110 lines
+is not the same answer as a first-place hit pointing at nine, and MRR cannot
+see the difference.
 
 Together with dropping a second copy of every chunk that existed to fold
-diacritics — something the `remove_diacritics 2` tokenizer does by itself, and
-the comment in the code had said so for a while — the index over a 30 MB archive
-went from **178.9 MB to 73.0 MB**. Same results on all 15 diacritic pairs tried,
-in both spellings.
+diacritics — something the `remove_diacritics 2` tokenizer does by itself — the
+index went from **5.5× the archive to 1.7×**: 178.9 MB down to 33.0 MB.
+
+⚠️ The first version of that chunk-size table came out backwards, with 400
+beating 2000 on MRR as well. It had been measured over an archive that had
+accidentally been written twice; duplicates skew bm25. The numbers above are
+from the restored one. A benchmark is only as honest as the corpus under it.
 
 One aside worth its own line: rebuilding the table did not shrink the file at
-all. SQLite keeps freed pages. The script now deletes the index and builds a new
-one, which is also the only way a schema change actually takes effect.
-
+all. SQLite keeps freed pages. The script now deletes the index and builds a
+new one, which is also the only way a schema change actually takes effect.
 ### What an answer costs
 
 Ten realistic queries, measured as characters of output — what the agent

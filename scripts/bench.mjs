@@ -239,11 +239,9 @@ async function pamat() {
   for (const u of vzorka) {
     const slova = [...new Set(undia(u.nadpis).match(/[a-z0-9]{4,}/g) ?? [])].slice(0, 6);
     if (!slova.length) continue;
+    // Rovnaká podoba dotazu ako v search.mjs — inak sa meria niečo iné.
     let r = [];
-    // Priúzky dotaz by človek skrátil, tak sa to aj meria.
-    for (let k = slova.length; !r.length && k >= 2; k--) {
-      try { r = dopyt.all(slova.slice(0, k).map((w) => `"${w}"*`).join(' AND ')); } catch { /* nič */ }
-    }
+    try { r = dopyt.all(slova.map((w) => `"${w}"*`).join(' OR ')); } catch { /* nič */ }
     if (!r.length) { prazdne++; continue; }
     const p = r.findIndex((x) => u.body.some((b) => b.subor === x.subor && x.od <= b.do && x.doo >= b.od));
     if (p < 0) continue;

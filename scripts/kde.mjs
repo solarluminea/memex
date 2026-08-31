@@ -75,6 +75,8 @@ export function kde(koren = process.env.MEMEX_PROJECT_ROOT || process.cwd(), arg
     trailIndex: vyber('trail-into', 'MEMEX_TRAIL_INDEX', c.trailIndex, join(root, 'TRAIL.md')),
     map: vyber('map', 'MEMEX_MAP', c.map, join(root, 'MAP.md')),
     stats: vyber('stats', 'MEMEX_STATS', c.stats, join(root, 'stats.jsonl')),
+    // Nastavenia, ktoré nie sú cestami — nech ich netreba čítať druhýkrát.
+    volby: c,
     nastavenieExistuje: existsSync(join(koren, SUBOR)),
   };
 }

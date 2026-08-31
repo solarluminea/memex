@@ -34,11 +34,16 @@ conversation was 3.6 MB — **0.8%**. The rest was base64 screenshots and test
 output nobody will ever search for.
 
 **Full-text** (`.memex/archive/.search.db`) — SQLite FTS5 over the archive,
-chunked by paragraph. `ziadost` finds `žiadosť` because the tokenizer folds
-diacritics on both sides, not because anything is stored twice. Measured: it
-used to store two copies of every chunk and overlap them by a paragraph, which
-cost 106 MB on a 30 MB archive, made search *worse*, and let a match land
-outside the line range the chunk reported.
+chunked into ~400-character paragraphs. `ziadost` finds `žiadosť` because the
+tokenizer folds diacritics on both sides, not because anything is stored twice.
+
+Query words are joined with `OR` and bm25 decides the order. `AND` looks safer
+and is not: it demands every word inside one chunk, which is exactly the case
+short chunks make rare. Measured on 202 topics — MRR 0.396 → 0.584, and queries
+returning nothing fell from 11.9 % to zero.
+
+⚠️ The index has no business being several times the archive. It was 5.5× and is
+now 1.7×, from removing two copies of every chunk that fixed nothing.
 
 **Trail** (`.memex/TRAIL.md` + `trail/`) — a list of topics, each pointing at
 an **exact line range** in a transcript. Not a summary. The text is not

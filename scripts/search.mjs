@@ -8,8 +8,8 @@
  *
  * Prečo nie len grep: grep nájde riadok, nie miesto v rozhovore. Archív má
  * relácie po stovkách kilobajtov a odpoveď býva rozložená do niekoľkých ťahov.
- * Indexuje sa preto **po odstavcoch s prekryvom**, aby veta na hranici nezmizla,
- * a vracia sa okno riadkov, ktoré sa dá otvoriť.
+ * Indexuje sa preto **po krátkych odstavcoch** a vracia sa okno riadkov, ktoré
+ * sa dá otvoriť — dosť úzke na to, aby sa dalo prečítať celé.
  *
  * Slovenčina:
  *   · Diakritiku rieši tokenizer, nie druhá kópia textu. `remove_diacritics 2`
@@ -56,25 +56,42 @@ const ARCHIVE = CESTY.archive;
 const INDEX = CESTY.index;
 
 /**
- * Rozdelí prepis na úseky po odstavcoch.
+ * Rozdelí prepis na úseky po odstavcoch, predvolene ~400 znakov na úsek.
  *
- * Kedysi tu bol prekryv jedného odstavca s odôvodnením, že odpoveď stojí na
- * dvojici „otázka + odpoveď" a tie sú dva susedné odstavce. Znie to rozumne
- * a bolo to zle v oboch smeroch.
+ * **Prečo tak krátke.** Dvetisíc tu stálo od začiatku a nikdy sa nemeralo.
+ * Prehľadané na 202 témach z ukazovateľa, kde je správna odpoveď rozsah
+ * riadkov, a s cenou vyjadrenou v riadkoch, ktoré musí čitateľ prejsť:
  *
- * **Ukazovateľ klamal.** Prekrytý text sa pridal do úseku, ale rozsah riadkov
- * sa nerozšíril. Namerané na skutočnom úseku: 2002 zo 4064 znakov ležalo mimo
- * rozsahu, ktorý úsek hlási. Keď zhoda padla do tej polovice, hľadanie vrátilo
- * riadky, v ktorých to slovo nie je — presne to, o čom celý projekt tvrdí, že
- * sa ukazovateľu stať nemôže.
+ *    400 znakov   MRR 0,584   R@8 75,2 %   25 riadkov na správnu odpoveď
+ *    700          0,599       78,7 %       41
+ *   1200          0,601       82,2 %       64
+ *   2000          0,629       81,7 %      102
+ *   3000          0,605       82,2 %      159
  *
- * **A horšie hľadalo.** Každý odstavec bol v indexe dvakrát, takže si
- * konkuroval sám so sebou a bm25 dostávalo pokrivené početnosti. Zmerané na
- * 185 témach z ukazovateľa, kde je správna odpoveď rozsah riadkov:
- * MRR 0,299 s prekryvom, **0,360 bez neho** — a index o 25 % menší. Drží to
- * na oboch poloviciach sady (+0,036 a +0,089).
+ * Dvetisíc má najlepšie MRR, o osem percent lepšie než štyristo — a stojí
+ * štyrikrát viac čítania. Pri nástroji, ktorého celý zmysel je lacný
+ * ukazovateľ, to nie je blízke rozhodnutie. Zásah na prvom mieste ukazujúci
+ * na 110 riadkov nie je to isté ako zásah na prvom mieste ukazujúci na deväť,
+ * a MRR ten rozdiel nevidí.
+ *
+ * Kto potrebuje radšej úspešnosť než lacnotu, prepíše `chunk` v `memex.json`.
+ *
+ * ⚠️ Prvé meranie tejto tabuľky vyšlo naopak — štyristo znakov vraj poráža
+ * dvetisíc aj v MRR. Meralo sa nad archívom, do ktorého sa omylom pripísalo
+ * všetko druhýkrát; duplicity krivia bm25. Čísla vyššie sú z obnoveného
+ * archívu.
+ *
+ * **Bez prekryvu.** Kedysi sa ku každému úseku pridal predošlý odstavec, aby
+ * sa dvojica „otázka + odpoveď" nerozpadla na hranici. Bolo to zle dvakrát:
+ *
+ * · Ukazovateľ klamal. Prekrytý text sa pridal, rozsah riadkov sa nerozšíril.
+ *   Namerané na skutočnom úseku: 2002 zo 4064 znakov ležalo mimo hláseného
+ *   rozsahu. Zhoda v tej polovici vrátila riadky, v ktorých to slovo nie je —
+ *   presne to, o čom celý projekt tvrdí, že sa ukazovateľu stať nemôže.
+ * · Horšie hľadalo. Každý odstavec bol v indexe dvakrát, konkuroval si sám so
+ *   sebou a krivil bm25.
  */
-function useky(text, maxZnakov = 2000) {
+function useky(text, maxZnakov = CESTY.volby.chunk ?? 400) {
   const riadky = text.split('\n');
   const out = [];
   let zac = 0, buf = [], dlzka = 0;
@@ -260,7 +277,20 @@ function hladaj(vyraz, n = 8) {
   const db = new DatabaseSync(INDEX);
   // Diakritiku skladá tokenizer na oboch stranách, takže dotaz je jedna vetva.
   const slova = vyraz.trim().split(/\s+/).filter(Boolean);
-  const dopyt = slova.map((s) => `"${s.replace(/"/g, '')}"*`).join(' AND ');
+  /*
+    OR, nie AND — poradie rozhodne bm25.
+
+    AND žiada všetky slová v jednom úseku. Čím je úsek presnejší, tým menej
+    pravdepodobná taká zhoda, takže presnosť ukazovateľa sa platila tým, že
+    hľadanie nenašlo nič. OR tú podmienku ruší a poradie necháva na bm25,
+    ktoré vzácne slovo váži samo — tá istá myšlienka ako pri viacslovnom
+    dotaze do mapy.
+
+    Namerané na 202 témach pri úseku 400 znakov: MRR 0,368 → 0,543,
+    R@1 33,7 → 47,5 %, a prázdnych odpovedí z 11,9 % na nulu. Drží na oboch
+    poloviciach sady (0,505 a 0,580).
+  */
+  const dopyt = slova.map((s) => `"${s.replace(/"/g, '')}"*`).join(' OR ');
   let r;
   try {
     r = db.prepare(

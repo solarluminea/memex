@@ -155,7 +155,31 @@ if (!existsSync(TARGET)) {
 }
 
 const state = existsSync(STATE) ? JSON.parse(readFileSync(STATE, 'utf8')) : {};
-let newTurns = 0, newChars = 0, touched = 0;
+
+/*
+  Koľko ťahov už v archíve je — poistka pre prípad, že stav chýba.
+
+  Stav bol jediný zdroj pravdy a to je zle: keď sa stratí, prepíše sa cudzím
+  nástrojom alebo sa archív presunie, archivár začne od nuly a **pripíše všetko
+  znovu**. Nič nezlyhá, len súbor je odrazu dvojnásobný.
+
+  Namerané na skutočnom projekte: prepis narástol zo 172 383 na 345 646 riadkov
+  a 64,6 % viet v ňom bolo dvakrát. Príčina bola smiešna — projekt mal vlastný
+  archivár, ktorý si stav písal do `.stav.json`, plugin ho hľadal
+  v `.state.json`, a našiel prázdno.
+
+  Ťahy sú to, čo archivár zapisuje, takže sa dajú spočítať priamo v archíve.
+  Stav je odteraz zrýchlenie, nie pravda: keď chýba, poloha sa odvodí a nič sa
+  nezdvojí.
+*/
+function tahovVArchive(cesta) {
+  if (!existsSync(cesta)) return { moje: 0, cudzie: 0 };
+  const t = readFileSync(cesta, 'utf8');
+  const vsetky = (t.match(/^## .+$/gm) ?? []).length;
+  const moje = (t.match(/^## (?:USER|CLAUDE) - /gm) ?? []).length;
+  return { moje, cudzie: vsetky - moje };
+}
+let newTurns = 0, newChars = 0, touched = 0, cudzichSuborov = 0;
 
 const sessions = readdirSync(SOURCE).filter((f) => f.endsWith('.jsonl'));
 
@@ -166,7 +190,27 @@ for (const file of sessions) {
 
   const out = join(TARGET, `${key}.md`);
   const firstTime = !existsSync(out);
-  let line = 0, added = '';
+  /*
+    Bez stavu sa nepripisuje naslepo.
+
+    Keď stav pre reláciu chýba, poloha sa odvodí z archívu — preskočí sa
+    toľko ťahov, koľko ich tam tento nástroj už zapísal.
+
+    A keď v súbore stoja ťahy, ktoré písal niekto iný, nerobí sa nič.
+    Namerané na projekte, ktorý mal vlastný archivár s vlastným formátom
+    (`## TY ·`, `## JA ·`) aj vlastným stavom: v jednom priečinku sa zišlo
+    55 016 cudzích ťahov a 3 716 vlastných, a jeden beh bez stavu prepis
+    zdvojil zo 172 383 na 345 646 riadkov. Nástroj, ktorý nevie povedať, kde
+    skončil, nemá pripisovať — mlčky prejsť je jediná bezpečná odpoveď.
+  */
+  const { moje, cudzie } = state[key] ? { moje: 0, cudzie: 0 } : tahovVArchive(out);
+  if (cudzie) {
+    cudzichSuborov++;
+    if (!quiet) console.error(`! ${key}.md: ${cudzie} turns written by something else — skipped.`);
+    continue;
+  }
+  const preskocit = moje;
+  let line = 0, added = '', vynechane = 0;
   let day = state[key]?.day ?? '';
   /*
     Každé zlyhanie raz za reláciu.
@@ -203,6 +247,7 @@ for (const file of sessions) {
       }
     }
     if (text || calls) {
+      if (vynechane < preskocit) { vynechane++; continue; }
       const who = j.type === 'user' ? 'USER' : 'CLAUDE';
       const when = j.timestamp?.slice(0, 16).replace('T', ' ') ?? '?';
       const body = [text, calls && '```\n' + calls.trimEnd() + '\n```'].filter(Boolean).join('\n\n');
@@ -226,6 +271,17 @@ writeFileSync(STATE, JSON.stringify(state, null, 2));
 // to print. A hook that says something every time you close a window starts
 // being ignored — and with it the message that actually matters.
 const mb = (x) => (x / 1048576).toFixed(2);
+/*
+  Preskočené súbory sa hlásia aj ticho.
+
+  Toto je jediná vec, ktorú `--quiet` prebiť nesmie: archív, do ktorého sa
+  nepripisuje, vyzerá presne ako archív, kde nie je nič nové. Rozdiel je, že
+  ten prvý ticho zabúda každú ďalšiu reláciu.
+*/
+if (cudzichSuborov) {
+  console.error(`! ${cudzichSuborov} transcripts were written by another tool and are NOT being updated.`);
+  console.error(`  Pick one archiver: either stop the other one, or point memex.json elsewhere.`);
+}
 if (!quiet || touched > 0) {
   console.log(`Sessions: ${sessions.length}, appended to: ${touched}`);
   console.log(`New turns: ${newTurns} (${mb(newChars)} MB, ~${Math.round(newChars / 3.2 / 1000)}k tokens)`);
