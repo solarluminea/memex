@@ -1,14 +1,20 @@
 ---
 description: Which file to open — a generated one-line-per-module map of the code
-argument-hint: [word to look for, or nothing to rebuild]
+argument-hint: [the task in a sentence, or nothing to rebuild]
 ---
 
 Code map for: **$ARGUMENTS**
 
 How:
 
-1. With an argument, look it up:
+1. **Ask it with the whole task, not one word.**
    `node ${CLAUDE_PLUGIN_ROOT}/scripts/map.mjs find "$ARGUMENTS"`
+   Give it the sentence the user gave you — "move the offer button right after
+   the deal name and put the kWp figure there too" — not `offer`. Measured on
+   300 real tasks: a single word answers 0.263 (MRR), the whole sentence
+   **0.574**. Each word is weighted by how rare it is and files touching more of
+   the question rank higher, so more words is more signal, not more noise.
+
    It prints one line per module — path and description. Open the file that
    matches; do **not** guess its contents from the line.
 2. **When a result carries a line number** (`PripadyTabulka.tsx:246`), that is

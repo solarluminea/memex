@@ -106,6 +106,11 @@ file is `DealsTable.tsx`. In a codebase whose interface is in another language,
 that is the only place the user's own vocabulary is written down, and it is
 exactly the vocabulary they phrase tasks in.
 
+⚠️ **Ask it in a sentence.** Measured on 300 real tasks: one word answers
+0.263 (MRR), the whole task 0.574. Words are weighted by rarity and files
+touching more of the question rank higher, so a long question is more signal,
+not more noise — and it is how a person phrases the thing anyway.
+
 ⚠️ **The map says which file to open, not what is in it.** Inferring the
 contents from one line is the mistake that costs a day of rework.
 
@@ -122,7 +127,7 @@ truthful pointers from 68 % to 93 %, with the output unchanged.
 
 | situation | command |
 |---|---|
-| "which file does X?" | `/memex:map <word>` |
+| "which file does X?" | `/memex:map <the whole task, in a sentence>` |
 | regularly, so history isn't lost | `/memex:archive` |
 | "why did we do it this way?" | `/memex:search <topic>` |
 | after new sessions pile up | `/memex:distill` |

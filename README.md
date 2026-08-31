@@ -348,19 +348,28 @@ in three hundred and connects nothing. None of it is printed.
 | sentence query, 300 tasks | R@1 | R@3 | R@12 | MRR |
 |---|---|---|---|---|
 | printed terms only | 30.0 % | 42.3 % | 56.7 % | 0.374 |
-| **+ hidden terms** | **44.3 %** | **60.0 %** | **73.7 %** | **0.535** |
+| + hidden terms | 44.3 % | 60.0 % | 73.7 % | 0.535 |
+| **+ words with diacritics** | **47.7 %** | **63.3 %** | **81.7 %** | **0.574** |
 
-It is the largest single change measured on the map: **+43 % MRR**, holding on
-both halves of the set (+0.176 and +0.146). Single-word queries go 0.206 →
-0.242 and the abbreviation test stops returning nothing at all.
+It is the largest single change measured on the map: **+53 % MRR**, holding on
+both halves of the set. Single-word queries go 0.206 → 0.263 and their empty
+answers fall from 11.0 % to 2.3 %.
+
+The second half of that gain came from a rule this project had written down and
+then broken in its own code. The identifiers were collected with
+`/\b[a-zA-Z]…/` — and `\b` in JavaScript is ASCII, so there is no word
+boundary after `ž` and no Slovak word from a comment ever entered the list. On
+one module: 90 terms captured against 116, so 44 thrown away, among them
+`prečítanie`, `požiadavky`, `prehliadača`. Those are the words a person
+actually types. Fixing it: MRR 0.535 → 0.574, R@12 73.7 → 81.7 %.
 
 The second effect matters more than the first. **Truthful pointers went from
-68.1 % to 92.9 %** — a file now comes back because it genuinely contains the
+68.1 % to 99.2 %** — a file now comes back because it genuinely contains the
 word, not because a stem guessed near it, and the stem fires a third as often.
 The crude part of the system got quieter by making the precise part reach
 further.
 
-The cost is honest and small: the map takes 1.16 s to build instead of 1.0, and
+The cost is honest and small: the map takes 1.76 s to build instead of 1.0, and
 a query touches 18.8 modules on average instead of 7.2. The output is still cut
 at twelve lines, so that shows up only in the "of how many" count.
 
