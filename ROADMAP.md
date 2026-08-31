@@ -342,6 +342,44 @@ answered properly: read it only when someone says "continue". What remains is
 that Claude Code has `--continue` and `--resume`, which restore the actual
 conversation rather than a summary of it. Revisit if that stops being true.
 
+**Returning only the top hit when its score is far ahead.** The reasoning is
+sound — extra candidates in the context are things the model can be distracted
+by. But the failure mode is asymmetric: three results of which one is right
+costs a little attention; **one result that is wrong costs a whole search**, and
+the agent has nothing to fall back on. The scoring here is deliberately crude
+(where the word matched, then what share of the filename it is), which is enough
+to order a list and not enough to bet a turn on. Where the evidence really is
+unambiguous the list is already short: measured across ten queries, `kwp`
+returns 1 result, `zmluva` and `dotacia` 2.
+
+**Stripping diacritics from tool output to save tokens.** Claimed at 45 %.
+Two problems. First the size: a typical result line is 82 characters of which
+**3 carry diacritics** — the rest is an ASCII path — so there is almost nothing
+to strip. Second and worse, the descriptions are *quotations from the source*.
+Print `Obchodny pripad` and an agent that greps for it finds nothing, because
+the code says `Obchodný prípad`. It would trade a rounding error in tokens for
+a class of silent search failures.
+
+The underlying observation is still true and worth knowing: an inflected
+language with diacritics costs meaningfully more tokens per character than
+English. It is not measurable from transcripts alone — `output_tokens` includes
+reasoning that never appears in the text — so no number is quoted here rather
+than a wrong one.
+
+**"You are forbidden to look for alternative files."** The third framing of a
+hard rule on how many things may be read, and it fails the same way as the
+first two: a quota gets satisfied, not obeyed. There is a real point inside it
+though — an agent handed `file.tsx:246` should read a window there rather than
+the whole file — and that is now in `commands/map.md` as guidance, phrased as
+what to do rather than what is banned.
+
+**"Do not search for the same thing twice in one session."** Long sessions do
+accumulate stale search results, but the remedy is context compaction, which
+the harness already does. A rule cannot know whether the second lookup is
+redundant or whether the file changed underneath in the meantime — and on this
+project it demonstrably does: a column disappeared between two runs of the same
+query, two hours apart.
+
 **Embeddings or a vector index.** On questions deliberately worded to share no
 word with the stored entry — the case embeddings exist for — a plain index over
 a greppable archive scored 6/6, the same as a vector one. Do not revisit this

@@ -11,7 +11,13 @@ How:
    `node ${CLAUDE_PLUGIN_ROOT}/scripts/map.mjs find "$ARGUMENTS"`
    It prints one line per module — path and description. Open the file that
    matches; do **not** guess its contents from the line.
-2. With no argument, rebuild the map:
+2. **When a result carries a line number** (`PripadyTabulka.tsx:246`), that is
+   where the description was read from. Read a window around it rather than the
+   whole file — `offset` about ten lines earlier, `limit` thirty — and widen
+   only if what you need is not there. The number is a starting point, not a
+   promise: it marks the first label in the file, and the thing you want may sit
+   further down the same block.
+3. With no argument, rebuild the map:
    `node ${CLAUDE_PLUGIN_ROOT}/scripts/map.mjs`
 
 If nothing comes back, the map is the wrong tool for that question. Two things
