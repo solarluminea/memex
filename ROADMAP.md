@@ -420,6 +420,69 @@ touched this" into "how did this file evolve" for the cost of one sort.
 
 ---
 
+## Measured and left out
+
+These were proposed as concrete patches, applied to a copy, and run against
+`bench.mjs` on 300 commits. None is a bad idea; none showed a benefit here.
+They are written down so the next person offering them gets a number instead
+of an opinion — and so that a repository where they *would* help can tell.
+
+### Wider capture of interface keys
+
+Read `name="sadzbaDph"` and `data-testid=` as well as `key: 'value'`, and widen
+the label-to-key window from 6 lines to 12.
+
+Applied: changed 2 modules of 1301, R@1/R@3/R@12/MRR identical to three
+decimals. Looking at the two lines explains why. One gained key names and lost
+"Nový obchodný prípad" to the line limit — a label a person would actually type,
+traded for `mesacnaPlatba`. The other gained `(q)`, the key of a search box.
+
+**Trigger:** a repository whose forms are JSX-attribute-driven rather than
+column-definition-driven. Check with
+`git grep -c 'name="' -- src | wc -l` against `git grep -c "accessorKey" -- src | wc -l`.
+If the first is several times the second, this is worth re-running.
+
+### Shorter schema fields as bridges
+
+Lower the minimum field length from 8 characters to 6. Note that the length is
+written in two places — `schemaFields()` and `identifiers()` — and changing only
+the first does nothing at all; the proposal as offered was inert.
+
+Changed properly, it touches 34 modules and moves no metric. The additions
+split evenly between real bridges (`vozidlo`, `clenovia`, `odbory`, `krosRad`)
+and words that bridge nothing (`pridane`, `pouzita`, `zacalo`).
+
+**Trigger:** `bench.mjs` R@3 rising by more than 1.5 points with the threshold
+lowered in both places. Until then the rule stands: do not add what cannot be
+shown to help, because every added term is one more thing that can go stale.
+
+### Different ranking weights
+
+Filename 6, description 4, directory 1, instead of 4 / 1 / 2.
+
+Moved R@3 by 0.4 points — one task of 300 — and nothing else. Ranking as a
+whole is worth 0.004 of MRR (see the ablation table in the README), so tuning
+its weights is polishing a part that is not where the loss is.
+
+**Trigger:** none proposed. If ranking ever becomes worth more than ~0.02 of
+MRR in the ablation, the weights inside it become worth arguing about.
+
+### A note on where these numbers came from
+
+The proposals arrived with a before/after table showing +9.3 points of recall.
+Those figures are this project's own ablation rows — "full map" and "nothing but
+exact match" — relabelled as before and after. The worked examples named
+`DetailKlienta.tsx`, `FakturacnyFormular.tsx`, `kalkulackaSpotreby.ts` and
+`src/db/schema.ts`; none of the four exists in the repository. Two "found
+nothing" claims were also wrong: `kwp` returned one module and `ico` twelve.
+
+This is not a reason to ignore proposals from a model — the capture-width idea
+was worth the twenty minutes it took to disprove, and the abbreviation finding
+came out of taking the criticism seriously. It is a reason to apply the patch
+to a copy and run the benchmark before believing the table that came with it.
+
+---
+
 ## How to use this file
 
 When an idea arrives that is already here, the answer is the trigger, not a

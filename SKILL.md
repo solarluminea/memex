@@ -84,7 +84,12 @@ A module's description comes from the first of three sources that yields one:
    `refreshToken` finds the client, the OAuth module and the sync route at
    once. Fields that are everywhere (`dealId`, in 250 files) are excluded —
    they connect nothing, they connect everything.
-4. **Nothing.** A dash — a work list, not an error.
+4. **An abbreviation, where it lives.** `kWp`, `IBAN`, `XML` are how people ask
+   and never how a screen reads. An abbreviation is appended to the three files
+   that use it most, and nowhere else: `kwh` is in 132 files, and naming all of
+   them answers nothing. Measured: this is worth 13 points of recall on
+   abbreviation queries and changes nothing on the rest.
+5. **Nothing.** A dash — a work list, not an error.
 
 Point two is the part no other tool does. Aider and Serena read the AST;
 memory tools read conversations; **nobody reads the strings the app displays.**
@@ -111,7 +116,7 @@ cue, not a defect.
 | after new sessions pile up | `/memex:distill` |
 | "how's the memory doing?" | `/memex:status` |
 | "is any of this actually helping?" | `/memex:stats` |
-| "did a change to the map help?" | `scripts/bench.mjs` |
+| "did a change to the map help?" | `scripts/bench.mjs` (`skratky`, `pravda`) |
 | "why does this file look like this?" | `search.mjs --file <path>` |
 
 A SessionEnd hook runs the archiver, refreshes the full-text index and rebuilds

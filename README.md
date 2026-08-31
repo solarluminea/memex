@@ -285,38 +285,105 @@ changed are the correct answer: *"Power belongs next to the name, offer button
 right after"* → `DealsTable.tsx`. Nobody wrote those for this test, so they cannot
 be tuned to what the map happens to know.
 
-Each task is queried with the words from its own commit message, and the position
-of the real file is recorded. Measured over **300 real commits**:
+### Recall, over 300 real commits
 
 | | R@1 | R@3 | R@12 | MRR | found nothing |
 |---|---|---|---|---|---|
-| **full map** | 37.3 % | 50.3 % | 65.3 % | **0.458** | 34.7 % |
-| without stem fallback | 34.3 % | 46.3 % | 58.7 % | 0.417 | 41.3 % |
-| without schema seeds | 36.3 % | 50.3 % | 64.7 % | 0.452 | 35.3 % |
-| without ranking | 36.7 % | 51.3 % | 63.3 % | 0.455 | 36.7 % |
-| without abbreviation keys | 37.3 % | 50.3 % | 65.3 % | 0.458 | 34.7 % |
-| nothing but exact match | 33.7 % | 46.3 % | 56.0 % | 0.411 | 44.0 % |
+| **full map** | 37.0 % | 50.3 % | 65.0 % | **0.455** | 35.0 % |
+| without stem fallback | 34.0 % | 46.3 % | 58.3 % | 0.414 | 41.7 % |
+| without schema seeds | 36.0 % | 50.3 % | 64.3 % | 0.449 | 35.7 % |
+| without ranking | 36.3 % | 50.7 % | 63.0 % | 0.451 | 37.0 % |
+| without abbreviations | 37.0 % | 50.3 % | 65.0 % | 0.455 | 35.0 % |
+| nothing but exact match | 33.3 % | 45.7 % | 55.7 % | 0.407 | 44.3 % |
 
-Read that carefully, because it is not flattering:
+- **Stem fallback is the clear win.** Removing it costs 9.3 points of recall and
+  raises "found nothing" from 35 % to 42 %. This is the case embeddings are
+  usually bought for, and here it is a `slice`.
+- **Schema seeds and ranking are small**: 0.006 and 0.004 of MRR. Ranking earns
+  its keep on "found nothing" (37 % → 35 %) rather than on position.
+- **Abbreviations do nothing here** — and that turned out to be a fact about the
+  test, not the feature.
 
-- **Stem fallback is the one clear win.** Removing it costs 6.6 points of recall
-  and 9 % of MRR, and raises "found nothing" from 35 % to 41 %.
-- **Abbreviation keys change nothing at all.** Identical figures to three decimals.
-- **Schema seeds move MRR by 0.006**, which is noise at this sample size.
-- **Ranking is a wash** — two points better at R@12, one point worse at R@3.
-- Everything together is +11 % MRR over plain matching, and the stem is most of it.
+### The test that could not test
 
-The honest reading is that two features have **no demonstrated benefit**. They are
-not removed, because the benchmark queries with words from commit messages, and a
-commit rarely says "kWp" or names a schema column — the cases those two were built
-for are under-represented by construction. But "we cannot show it helps" is where
-this stands, and it is written here rather than left out.
+A query in the table above is a word of six letters or more taken from a commit
+message. `kwp` has three. Measured: **0.0 % of the 1114 queries were an
+abbreviation** — not few, none. A feature the benchmark cannot reach does not
+look ineffective; it looks absent. That is the more dangerous failure, because
+the row is full of numbers and reads like a result.
 
-To reproduce, from the project root:
+So `bench.mjs skratky` asks the same repository the same way, but the query *is*
+the abbreviation, over the 30 commits whose message contains one:
+
+| | R@1 | R@3 | R@12 | MRR | found nothing |
+|---|---|---|---|---|---|
+| **full map** | 16.7 % | 33.3 % | 53.3 % | **0.270** | 46.7 % |
+| without abbreviations | 13.3 % | 20.0 % | 40.0 % | 0.198 | 60.0 % |
+| nothing but exact match | 3.3 % | 6.7 % | 36.7 % | 0.106 | 63.3 % |
+
+n = 30 is small and the figures should be read as a direction, not a decimal.
+
+### What the abbreviation rule had to become
+
+The first version read keys sitting beside on-screen labels. Measured after the
+fact: it changed **one line of 2478**. `kwh` is in 132 files and the map returned
+nothing for it; `iban`, `xml` and `mwh` likewise.
+
+Adding the abbreviation to all 132 would have been worse than returning nothing.
+What works is **where the abbreviation lives, not where it is mentioned**:
+`lib/calc/engine.ts` says `kwh` 104 times, the other 131 files 557 times between
+them. Top three by count, nothing else. `iban` now answers `qrPlatba.ts`.
+
+One trap on the way: an abbreviation must be matched as a whole segment of an
+identifier. As a substring, `ean` sits inside `boolean` and `ico` inside
+`unicode` — the first measurement reported 168 hits for `ean`, of which the
+number that were real was zero.
+
+### What recall cannot see
+
+Recall counts what was found and says nothing about what was invented.
+`bench.mjs pravda` checks whether the file a pointer names actually contains the
+word that was asked for, over 829 queries:
+
+| | pointers that hold up | modules hit, on average |
+|---|---|---|
+| exact match | 98.3 % | 7.3 |
+| stem fallback | 29.1 % | 13.4 |
+
+The 29 % is not a lie count. A stem match is *meant* to return a different form
+of the word, so literal containment is the wrong test for it — the number that
+matters beside it is the second column. The stem buys 9.3 points of recall and
+pays with roughly twice the list to read, in the 28 % of queries where it fires.
+That is a trade worth making, and now it is a trade with a price on it.
+
+### What an answer costs
+
+Ten realistic queries, measured as characters of output — what the agent
+actually reads:
+
+| | characters |
+|---|---|
+| ten answers from the map | 7 017 |
+| the same ten as `git grep -il` | 37 646 |
+| listing `src` once | 41 610 |
+| the whole of `MAP.md` | 108 248 |
+
+5.4× less than grep, and that understates it: grep returns paths, the map
+returns paths **with a sentence about each**, so the reader stops there instead
+of opening four files to find out which one it was. It also overstates it in the
+other direction — grep is exact and the map can be stale. They answer different
+questions; the point of the number is that asking the map first is cheap.
+
+The map itself costs no model tokens to build. It is a script: 1301 modules in
+under a second, run by a hook, never by a model.
+
+### Reproducing it
 
 ```
-node memex/scripts/bench.mjs                        # full map
-MEMEX_ABLATE=stem node memex/scripts/bench.mjs      # with that part switched off
+node memex/scripts/bench.mjs                        # recall, words from commits
+node memex/scripts/bench.mjs skratky                # recall, the query is an abbreviation
+node memex/scripts/bench.mjs pravda                 # do the pointers hold up
+MEMEX_ABLATE=stem node memex/scripts/bench.mjs      # with one part switched off
 ```
 
 ⚠️ These numbers describe **one repository at one moment**. Run it on yours; the

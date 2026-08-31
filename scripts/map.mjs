@@ -90,10 +90,12 @@ const MAX_LINE = config.maxLine ?? 120;
   písmená, ktoré sa trafia doprostred bežných slov — namerané, `vs` označilo
   kľúč `vsetky` za skratku.
 */
-const SKRATKA = new RegExp(
-  `(${(config.abbreviations ?? ['kwp', 'kwh', 'mwh', 'dph', 'ico', 'dic', 'iban', 'pdf', 'csv', 'xml', 'url', 'api', 'eur', 'ean', 'gps', 'html']).join('|')})`,
-  'i',
-);
+const SKRATKY = config.abbreviations ?? ['kwp', 'kwh', 'mwh', 'dph', 'ico', 'dic', 'iban',
+  'pdf', 'csv', 'xml', 'url', 'api', 'eur', 'ean', 'gps', 'html'];
+const SKRATKA = new RegExp(`(${SKRATKY.join('|')})`, 'i');
+// Koľko súborov smie skratka označiť. Tri, lebo odpoveďou má byť súbor na
+// otvorenie — nie zoznam. `kwh` je v 132 súboroch a všetky nepomôžu ani jeden.
+const ABBR_TOP = config.abbrevTop ?? 3;
 const skipDirs = new Set([...SKIP_DIR, ...(config.skip ?? [])]);
 
 // ── collecting files ───────────────────────────────────────────────────────
@@ -341,6 +343,32 @@ function schemaFields() {
   return new Set();
 }
 
+/*
+  Kde skratka býva, nie kde sa mihne.
+
+  Namerané: `kwh` je v 132 súboroch a mapa naň nevracala nič — do popisku sa
+  nedostal, lebo pôvodné pravidlo čítalo len kľúče vedľa popiskov na obrazovke.
+  Pridať ho do všetkých 132 by ale bolo horšie než nevracať nič.
+
+  Rozhoduje počet výskytov: `lib/calc/engine.ts` má `kwh` stoštyrikrát, zvyšok
+  repozitára dokopy 557 rozdrobených do 130 súborov. Prvý je o tom, ostatné to
+  spomenú. To isté `iban`: `qrPlatba.ts` jedenásťkrát, ostatné po jednom.
+
+  Skratka sa počíta len ako celý úsek identifikátora. Podreťazcom by `ean`
+  sedelo v `boolean` a `ico` v `unicode` — pri prvom meraní to tak vyšlo:
+  168 nálezov `ean`, z toho pravých nula.
+*/
+function skratkyVSubore(text) {
+  const out = new Map();
+  for (const id of text.match(/[A-Za-z_$][\w$]*/g) ?? []) {
+    for (const usek of id.split(/[_$]|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/)) {
+      const k = usek.toLowerCase();
+      if (SKRATKY.includes(k)) out.set(k, (out.get(k) ?? 0) + 1);
+    }
+  }
+  return out;
+}
+
 /** Identifikátory v súbore ako množina — jeden prechod, nie regex na pole. */
 function identifiers(text, medzi) {
   const out = new Set();
@@ -367,16 +395,39 @@ function describe(path) {
 
 function build(files) {
   const polia = ABLATE.has('seeds') ? new Set() : schemaFields();
+  const chceSkratky = !ABLATE.has('abbrev');
   const vSubore = new Map();
   const pocet = new Map();
-  if (polia.size) {
+  const kdeSkratka = new Map();
+  if (polia.size || chceSkratky) {
     for (const f of files) {
       let text;
       try { text = readFileSync(f, 'utf8'); } catch { continue; }
-      const found = identifiers(text, polia);
-      if (!found.size) continue;
-      vSubore.set(f, found);
-      for (const p of found) pocet.set(p, (pocet.get(p) ?? 0) + 1);
+      if (polia.size) {
+        const found = identifiers(text, polia);
+        if (found.size) {
+          vSubore.set(f, found);
+          for (const p of found) pocet.set(p, (pocet.get(p) ?? 0) + 1);
+        }
+      }
+      if (chceSkratky) {
+        for (const [sk, n] of skratkyVSubore(text)) {
+          // Jediný výskyt je zmienka, nie domov.
+          if (n < 2) continue;
+          let z = kdeSkratka.get(sk);
+          if (!z) kdeSkratka.set(sk, (z = []));
+          z.push({ f, n });
+        }
+      }
+    }
+  }
+  // Skratka označí len tie súbory, kde jej je najviac — inak neoznačí nič použiteľné.
+  const domov = new Map();
+  for (const [sk, zoznam] of kdeSkratka) {
+    for (const { f } of zoznam.sort((a, b) => b.n - a.n).slice(0, ABBR_TOP)) {
+      let z = domov.get(f);
+      if (!z) domov.set(f, (z = []));
+      z.push(sk);
     }
   }
   // Most je pole, ktoré spája niekoľko súborov. Jeden nespája nič, dvesto tiež nie.
@@ -385,6 +436,7 @@ function build(files) {
   const modules = files.map((f) => {
     const zaklad = describe(f);
     const seeds = [...(vSubore.get(f) ?? [])].filter((p) => mosty.has(p)).slice(0, 2);
+    seeds.push(...(domov.get(f) ?? []));
     // Až za popis a len keď tam ešte nie sú — popis je o obrazovke, toto je most.
     const nove = seeds.filter((p) => !undiacritic(zaklad.description ?? '').includes(p.toLowerCase()));
     /*
