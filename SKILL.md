@@ -78,7 +78,13 @@ A module's description comes from the first of three sources that yields one:
    reads on screen, paired with the key beside them in the code, so a column
    reads `Power (powerKwp)`. Measured: of 48 files with no header, 47 got a
    usable description this way.
-3. **Nothing.** A dash — a work list, not an error.
+3. **A schema field that bridges layers.** A column name is a data contract:
+   the same word stands in the table, the API and the component. Fields that
+   appear in only a handful of files are appended to the description, so
+    finds the client, the OAuth module and the sync route at
+   once. Fields that are everywhere (, in 250 files) are excluded —
+   they connect nothing, they connect everything.
+4. **Nothing.** A dash — a work list, not an error.
 
 Point two is the part no other tool does. Aider and Serena read the AST;
 memory tools read conversations; **nobody reads the strings the app displays.**

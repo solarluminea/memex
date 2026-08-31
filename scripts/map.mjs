@@ -291,6 +291,52 @@ function fromInterface(source) {
   return { text, line: found[0].line + 1 };
 }
 
+// ── 3. schema fields that bridge layers ────────────────────────────────────
+
+/*
+  Polia z databázovej schémy, ktoré spájajú málo súborov.
+
+  Meno poľa je dátový kontrakt: to isté slovo stojí v tabuľke, v API aj v
+  komponente, a spája ich bez parsera — identifikátor sa buď vyskytuje, alebo
+  nie. Je to vertikálny rez, aký by dal graf volaní, za cenu jedného Setu.
+
+  Prah je celá vec. Namerané na schéme s 510 poľami:
+
+    všetky polia          981 z 1070 súborov, medián 6 polí na súbor
+    pole v 2–6 súboroch   218 z 1070 súborov, medián 1
+
+  Prvé číslo je zaplavená mapa — `dealId` je v 250 súboroch a nespája nič, len
+  ich všetky. Druhé sú skutočné mosty: `refreshToken` cez klienta, OAuth a
+  synchronizáciu; `priecinokId` cez route, obrazovku a dotazy.
+*/
+const SCHEMA_FILES = ['prisma/schema.prisma', 'db/schema.ts', 'src/db/schema.ts', 'drizzle/schema.ts'];
+const SEED_MIN = config.seedMin ?? 2;
+const SEED_MAX = config.seedMax ?? 6;
+
+function schemaFields() {
+  for (const rel of [...(config.schema ? [config.schema] : []), ...SCHEMA_FILES]) {
+    const p = join(ROOT, rel);
+    if (!existsSync(p)) continue;
+    const text = readFileSync(p, 'utf8');
+    const fields = new Set([
+      ...[...text.matchAll(/^\s{2}([a-z][a-zA-Z0-9]*)\s+\w/gm)].map((m) => m[1]),
+      ...[...text.matchAll(/^\s*([a-z][a-zA-Z0-9]*)\s*:\s*\w+\(/gm)].map((m) => m[1]),
+    ]);
+    // Krátke meno je skoro vždy spoločné viacerým modelom a nerozlišuje nič.
+    return new Set([...fields].filter((f) => f.length >= 8));
+  }
+  return new Set();
+}
+
+/** Identifikátory v súbore ako množina — jeden prechod, nie regex na pole. */
+function identifiers(text, medzi) {
+  const out = new Set();
+  for (const m of text.matchAll(/\b[a-z][a-zA-Z0-9]{7,}\b/g)) {
+    if (medzi.has(m[0])) out.add(m[0]);
+  }
+  return out;
+}
+
 // ── building the map ───────────────────────────────────────────────────────
 
 function describe(path) {
@@ -307,10 +353,42 @@ function describe(path) {
 }
 
 function build(files) {
-  const modules = files.map((f) => ({
-    path: relative(ROOT, f).split(sep).join('/'),
-    ...describe(f),
-  }));
+  const polia = schemaFields();
+  const vSubore = new Map();
+  const pocet = new Map();
+  if (polia.size) {
+    for (const f of files) {
+      let text;
+      try { text = readFileSync(f, 'utf8'); } catch { continue; }
+      const found = identifiers(text, polia);
+      if (!found.size) continue;
+      vSubore.set(f, found);
+      for (const p of found) pocet.set(p, (pocet.get(p) ?? 0) + 1);
+    }
+  }
+  // Most je pole, ktoré spája niekoľko súborov. Jeden nespája nič, dvesto tiež nie.
+  const mosty = new Set([...pocet.entries()].filter(([, n]) => n >= SEED_MIN && n <= SEED_MAX).map(([p]) => p));
+
+  const modules = files.map((f) => {
+    const zaklad = describe(f);
+    const seeds = [...(vSubore.get(f) ?? [])].filter((p) => mosty.has(p)).slice(0, 2);
+    // Až za popis a len keď tam ešte nie sú — popis je o obrazovke, toto je most.
+    const nove = seeds.filter((p) => !undiacritic(zaklad.description ?? '').includes(p.toLowerCase()));
+    /*
+      Strop platí aj na most.
+
+      Prvá verzia pridávala polia až za orezanie, takže popis, ktorý sa mal
+      zmestiť do stodvadsiatich znakov, mal stotridsať. Keď sa nezmestí oboje,
+      ustupuje most — popis hovorí, čo je na obrazovke, a to je hlavná otázka.
+    */
+    let popis = zaklad.description;
+    for (const p of nove) {
+      const skus = [popis, p].filter(Boolean).join(' · ');
+      if (skus.length > MAX_LINE && popis) break;
+      popis = skus;
+    }
+    return { path: relative(ROOT, f).split(sep).join('/'), ...zaklad, description: popis };
+  });
 
   const missing = modules.filter((m) => !m.description).length;
   const kTokens = Math.round((modules.length * 80) / 3 / 1000);

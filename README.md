@@ -111,7 +111,7 @@ saying which file to open and nothing more. It costs no tokens to build, because
 it is a script rather than a model — 1,297 modules in **0.44 seconds** on the
 project it was written for.
 
-A module's description comes from the first of three sources that yields one:
+A module's description comes from the first sources that yield one:
 the **header comment** (a human wrote it, so it says why the module exists), the
 **interface strings** for UI files without one, or a dash.
 
