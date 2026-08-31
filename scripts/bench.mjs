@@ -12,6 +12,10 @@
  *           Vylepšenie, ktoré test nemôže vyskúšať, nevyzerá neúčinne; vyzerá
  *           neexistujúco.
  *
+ * `pamat`   Nájde hľadanie v archíve tú pasáž, na ktorú ukazuje ukazovateľ?
+ *           Nadpis záznamu je dotaz, jeho rozsah riadkov je správna odpoveď —
+ *           kľúč, ktorý nikto pre tento test nepísal, rovnako ako pri commitoch.
+ *
  * `pravda`  Koľko ukazovateľov je nepravdivých? Recall vidí len to, čo mapa
  *           našla, nie čo si vymyslela. Súbor sa počíta ako pravdivý, keď
  *           hľadané slovo naozaj obsahuje. Toto je jediné miesto, kde vidno
@@ -21,7 +25,9 @@
  * ich príspevok — nie súčet všetkého naraz.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { kde } from './kde.mjs';
 import { fileURLToPath } from 'node:url';
 
 const APP = process.env.MEMEX_PROJECT_ROOT || process.cwd();
@@ -147,29 +153,29 @@ function recall(sada) {
 function slovnik() {
   const zoznam = execFileSync('git', ['ls-files', 'src', 'scripts'], { cwd: APP, encoding: 'utf8', maxBuffer: 1 << 28 })
     .split('\n').filter((f) => /\.(ts|tsx|mjs|mts)$/.test(f));
-  const kde = new Map();
+  const vSuboroch = new Map();
   for (const f of zoznam) {
     let t = '';
     try { t = readFileSync(`${APP}/${f}`, 'utf8'); } catch { continue; }
     for (const w of new Set(undia(t).match(/[a-z0-9]{2,}/g) ?? [])) {
-      let s = kde.get(w); if (!s) kde.set(w, (s = new Set()));
+      let s = vSuboroch.get(w); if (!s) vSuboroch.set(w, (s = new Set()));
       s.add(f);
     }
   }
-  return kde;
+  return vSuboroch;
 }
 
 function pravda(sada) {
   const dotazy = [...new Set(sada.flatMap((u) => u.slova))];
   const vys = odpovede(dotazy);
-  const kde = slovnik();
-  const tokeny = [...kde.keys()];
+  const vSuboroch = slovnik();
+  const tokeny = [...vSuboroch.keys()];
   let vratenych = 0, pravdivych = 0, kmenVratenych = 0, kmenPravdivych = 0, kmenDotazov = 0;
   const velkostPresna = [], velkostKmen = [];
   for (let i = 0; i < dotazy.length; i++) {
     const q = dotazy[i], v = vys[i]; if (!v) continue;
     const suboryStermom = new Set();
-    for (const t of tokeny) if (t.includes(q)) for (const f of kde.get(t)) suboryStermom.add(f);
+    for (const t of tokeny) if (t.includes(q)) for (const f of vSuboroch.get(t)) suboryStermom.add(f);
     if (v.zasiahnutych) (v.kmen ? velkostKmen : velkostPresna).push(v.zasiahnutych);
     if (v.kmen) kmenDotazov++;
     for (const c of v.cesty) {
@@ -198,8 +204,62 @@ function pravda(sada) {
   ].join('\n');
 }
 
+/*
+  Benchmark pamäte — nájde hľadanie tú pasáž, na ktorú ukazuje ukazovateľ?
+
+  Kľúč správnych odpovedí je hotový a nikto ho pre tento test nepísal. Záznam
+  ukazovateľa má nadpis (téma vetou) a odkaz na presný rozsah riadkov
+  v prepise: nadpis je dotaz, rozsah je správna odpoveď. Ten istý trik ako
+  s commitmi, len na druhej polovici projektu.
+
+  Odhalil, že prekryv úsekov bol dvojitá chyba — pozri komentár pri `useky()`
+  v `search.mjs`.
+*/
+async function pamat() {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { trail, index } = kde();
+  if (!existsSync(trail)) return `ukazovateľ nie je v ${trail}`;
+  if (!existsSync(index)) return `index nie je postavený — node memex/scripts/search.mjs --index`;
+
+  const sada = [];
+  for (const f of readdirSync(trail).filter((x) => x.endsWith('.md'))) {
+    const t = readFileSync(join(trail, f), 'utf8');
+    const h = /^# (20\d\d-\d\d-\d\d)\s*·\s*(.+)$/m.exec(t);
+    if (!h) continue;
+    const body = [...t.matchAll(/\]\(([^)#]+)#L(\d+)-L(\d+)\)/g)]
+      .map((m) => ({ subor: m[1].split('/').pop(), od: +m[2], do: +m[3] }));
+    if (body.length) sada.push({ nadpis: h[2].trim(), body });
+  }
+  if (!sada.length) return `žiadne použiteľné záznamy v ${trail}`;
+  const vzorka = sada.slice(SKIP, SKIP + (N === 300 ? sada.length : N));
+
+  const db = new DatabaseSync(index);
+  const dopyt = db.prepare('SELECT subor, od, doo FROM useky WHERE useky MATCH ? ORDER BY bm25(useky) LIMIT 8');
+  let r1 = 0, r3 = 0, r8 = 0, mrr = 0, prazdne = 0;
+  for (const u of vzorka) {
+    const slova = [...new Set(undia(u.nadpis).match(/[a-z0-9]{4,}/g) ?? [])].slice(0, 6);
+    if (!slova.length) continue;
+    let r = [];
+    // Priúzky dotaz by človek skrátil, tak sa to aj meria.
+    for (let k = slova.length; !r.length && k >= 2; k--) {
+      try { r = dopyt.all(slova.slice(0, k).map((w) => `"${w}"*`).join(' AND ')); } catch { /* nič */ }
+    }
+    if (!r.length) { prazdne++; continue; }
+    const p = r.findIndex((x) => u.body.some((b) => b.subor === x.subor && x.od <= b.do && x.doo >= b.od));
+    if (p < 0) continue;
+    mrr += 1 / (p + 1);
+    if (p < 1) r1++;
+    if (p < 3) r3++;
+    if (p < 8) r8++;
+  }
+  db.close();
+  const pc = (x) => ((x / vzorka.length) * 100).toFixed(1).padStart(5);
+  return `n=${String(vzorka.length).padStart(3)}  R@1 ${pc(r1)}%  R@3 ${pc(r3)}%  R@8 ${pc(r8)}%  MRR ${(mrr / vzorka.length).toFixed(3)}  prázdne ${pc(prazdne)}%`;
+}
+
 const stitok = (process.env.MEMEX_ABLATE ? `bez: ${process.env.MEMEX_ABLATE}` : 'plná mapa').padEnd(22);
 if (REZIM === 'pravda') console.log(`${stitok}\n${pravda(ulohy(zoSlov))}`);
 else if (REZIM === 'skratky') console.log(`${stitok}${recall(ulohy(zoSkratiek))}`);
 else if (REZIM === 'veta') console.log(`${stitok}${recall(ulohy(zVety))}`);
+else if (REZIM === 'pamat') console.log(`${'archív'.padEnd(22)}${await pamat()}`);
 else console.log(`${stitok}${recall(ulohy(zoSlov))}`);

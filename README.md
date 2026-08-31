@@ -424,6 +424,42 @@ and is not counted as a gain.
 Both were caught by the measurement, not by review. That is the argument for
 having one.
 
+### The other half finally has a benchmark too
+
+Everything above measures the map. The memory half had only the blind-judge
+study — 22 questions, run once. Its answer key was sitting there the whole
+time: **a trail entry is a question and a line range in one file.** The heading
+says what the topic is, the pointer says exactly where it lives. Nobody wrote
+either of them for a test.
+
+`bench.mjs pamat` queries the archive with the words from each heading and
+checks whether the passage that comes back overlaps the range the entry points
+at. Over 191 topics: **R@1 26.7 %, R@3 43.5 %, MRR 0.355**, 8.4 % returning
+nothing.
+
+The first thing it found paid for itself. Chunks were indexed **with one
+paragraph of overlap**, so a question-and-answer pair spanning a boundary would
+not be split. It sounded right and was wrong twice over:
+
+- **The pointer lied.** The overlapped text was added to the chunk but the line
+  range was not extended. Measured on a real chunk: 2002 of 4064 characters lay
+  outside the range the chunk reports. A match in that half returned lines that
+  do not contain the highlighted word — the one thing this project claims a
+  pointer cannot do.
+- **It searched worse.** Every paragraph was in the index twice, competing with
+  itself and skewing bm25. Removing it: **MRR 0.299 → 0.360**, and it holds on
+  both halves of the set (+0.036 and +0.089).
+
+Together with dropping a second copy of every chunk that existed to fold
+diacritics — something the `remove_diacritics 2` tokenizer does by itself, and
+the comment in the code had said so for a while — the index over a 30 MB archive
+went from **178.9 MB to 73.0 MB**. Same results on all 15 diacritic pairs tried,
+in both spellings.
+
+One aside worth its own line: rebuilding the table did not shrink the file at
+all. SQLite keeps freed pages. The script now deletes the index and builds a new
+one, which is also the only way a schema change actually takes effect.
+
 ### What an answer costs
 
 Ten realistic queries, measured as characters of output — what the agent

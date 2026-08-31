@@ -34,8 +34,11 @@ conversation was 3.6 MB — **0.8%**. The rest was base64 screenshots and test
 output nobody will ever search for.
 
 **Full-text** (`.memex/archive/.search.db`) — SQLite FTS5 over the archive,
-chunked by paragraph with overlap. Every chunk is indexed twice, with and
-without diacritics, so `ziadost` finds `žiadosť`.
+chunked by paragraph. `ziadost` finds `žiadosť` because the tokenizer folds
+diacritics on both sides, not because anything is stored twice. Measured: it
+used to store two copies of every chunk and overlap them by a paragraph, which
+cost 106 MB on a 30 MB archive, made search *worse*, and let a match land
+outside the line range the chunk reported.
 
 **Trail** (`.memex/TRAIL.md` + `trail/`) — a list of topics, each pointing at
 an **exact line range** in a transcript. Not a summary. The text is not
@@ -116,7 +119,7 @@ cue, not a defect.
 | after new sessions pile up | `/memex:distill` |
 | "how's the memory doing?" | `/memex:status` |
 | "is any of this actually helping?" | `/memex:stats` |
-| "did a change to the map help?" | `scripts/bench.mjs` (`skratky`, `pravda`) |
+| "did a change help?" | `scripts/bench.mjs` (`veta`, `skratky`, `pamat`, `pravda`) |
 | "why does this file look like this?" | `search.mjs --file <path>` |
 
 A SessionEnd hook runs the archiver, refreshes the full-text index and rebuilds

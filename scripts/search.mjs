@@ -12,17 +12,17 @@
  * a vracia sa okno riadkov, ktoré sa dá otvoriť.
  *
  * Slovenčina:
- *   · Text sa indexuje **dvakrát** — raz s diakritikou, raz bez nej. Bez toho
- *     „ziadost" a „žiadosť" sú dve rôzne slová a človek, ktorý píše rýchlo,
- *     nenájde nič.
+ *   · Diakritiku rieši tokenizer, nie druhá kópia textu. `remove_diacritics 2`
+ *     zloží „ziadost" a „žiadosť" na jedno slovo pri indexovaní aj pri dotaze,
+ *     takže kto píše rýchlo, nájde rovnako ako ten, kto píše presne.
  *
- *     ⚠️ Dôvod, ktorý tu stál pôvodne — že `unicode61 remove_diacritics`
- *     nezvládne `ľ`, `ô` a `ĺ` — **neplatí**. Preverené 31. 8. 2026 na SQLite
- *     3.53.3: `remove_diacritics 1` aj `2` nájdu všetky štyri tvary. Buď to
- *     bola staršia verzia, alebo omyl. Dvojitá indexácia teda rieši niečo,
- *     čo tokenizer vie sám, a dá sa zjednodušiť — nechávam ju len preto, že
- *     funguje a zmena by znamenala prestavať index. Kto sa toho chytí, nech
- *     najprv zopakuje ten pokus na svojej verzii SQLite.
+ *     ⚠️ Pôvodne sa text indexoval dvakrát, raz s diakritikou a raz bez, lebo
+ *     `remove_diacritics` vraj nezvládne `ľ`, `ô` a `ĺ`. Neplatí to a stálo to
+ *     **44 % veľkosti indexu**: na 32 MB archívu 151,3 MB oproti 84,8 MB.
+ *     Overené na 15 dotazoch v oboch podobách — počet zhôd sedel na kus
+ *     v každom. Kto to bude meniť ďalej, nech ten pokus zopakuje na svojej
+ *     verzii SQLite: `detail=column` zmenší index na 71,5 MB, ale rozbije
+ *     `snippet()`, čiže ukážku, kvôli ktorej sa hľadá.
  *   · `\b` sa v hľadaní nepoužíva vôbec. V JavaScripte je ASCII, takže hranica
  *     slova za „ž" neexistuje a filter ticho prepadne. Namerané trikrát za deň.
  *
@@ -30,7 +30,7 @@
  *   memex/scripts/search.mjs --index [priečinok]   postaví index
  *   memex/scripts/search.mjs "výraz" [--n 8]       hľadá
  */
-import { readFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { kde } from './kde.mjs';
@@ -55,24 +55,32 @@ const CESTY = kde();
 const ARCHIVE = CESTY.archive;
 const INDEX = CESTY.index;
 
-/** Bez diakritiky a malými písmenami — druhá podoba každého úseku. */
-const bezDiakritiky = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-
 /**
- * Rozdelí prepis na úseky po odstavcoch, s prekryvom jedného odstavca.
+ * Rozdelí prepis na úseky po odstavcoch.
  *
- * Prekryv je tam preto, že odpoveď často stojí na dvojici „otázka + odpoveď"
- * a tie sú v prepise dva susedné odstavce. Bez prekryvu by sa každá druhá
- * takáto dvojica rozpadla presne na hranici.
+ * Kedysi tu bol prekryv jedného odstavca s odôvodnením, že odpoveď stojí na
+ * dvojici „otázka + odpoveď" a tie sú dva susedné odstavce. Znie to rozumne
+ * a bolo to zle v oboch smeroch.
+ *
+ * **Ukazovateľ klamal.** Prekrytý text sa pridal do úseku, ale rozsah riadkov
+ * sa nerozšíril. Namerané na skutočnom úseku: 2002 zo 4064 znakov ležalo mimo
+ * rozsahu, ktorý úsek hlási. Keď zhoda padla do tej polovice, hľadanie vrátilo
+ * riadky, v ktorých to slovo nie je — presne to, o čom celý projekt tvrdí, že
+ * sa ukazovateľu stať nemôže.
+ *
+ * **A horšie hľadalo.** Každý odstavec bol v indexe dvakrát, takže si
+ * konkuroval sám so sebou a bm25 dostávalo pokrivené početnosti. Zmerané na
+ * 185 témach z ukazovateľa, kde je správna odpoveď rozsah riadkov:
+ * MRR 0,299 s prekryvom, **0,360 bez neho** — a index o 25 % menší. Drží to
+ * na oboch poloviciach sady (+0,036 a +0,089).
  */
 function useky(text, maxZnakov = 2000) {
   const riadky = text.split('\n');
   const out = [];
-  let zac = 0, buf = [], dlzka = 0, predosly = null;
+  let zac = 0, buf = [], dlzka = 0;
   const uloz = (koniec) => {
     if (!buf.length) return;
-    out.push({ od: zac + 1, do: koniec, text: (predosly ? predosly.text + '\n' : '') + buf.join('\n') });
-    predosly = { text: buf.join('\n') };
+    out.push({ od: zac + 1, do: koniec, text: buf.join('\n') });
   };
   for (let i = 0; i < riadky.length; i++) {
     buf.push(riadky[i]);
@@ -86,21 +94,30 @@ function useky(text, maxZnakov = 2000) {
 
 function postavIndex(priecinok = ARCHIVE) {
   const cesta = priecinok === ARCHIVE ? INDEX : join(priecinok, '.search.db');
-  if (existsSync(cesta)) {
-    // Prestavba je lacná a čiastočne dopísaný index je horší než žiadny.
-    try { readFileSync(cesta); } catch { /* ignoruje sa */ }
-  }
-  const db = new DatabaseSync(cesta);
-  db.exec('DROP TABLE IF EXISTS useky');
-  db.exec(`CREATE VIRTUAL TABLE useky USING fts5(
-    subor UNINDEXED, od UNINDEXED, doo UNINDEXED, text, bez, tokenize='unicode61')`);
+  /*
+    Starý index sa zmaže, nie prepíše.
 
-  const vloz = db.prepare('INSERT INTO useky (subor, od, doo, text, bez) VALUES (?, ?, ?, ?, ?)');
+    `DROP TABLE` v SQLite uvoľnené stránky súboru nevráti — ostanú v ňom ako
+    voľné miesto. Namerané: po zmenšení schémy na polovicu mal súbor na disku
+    presne tých istých 178,9 MB, čo predtým. Skript hlásil hotovo a jediné,
+    čo sa naozaj zmenilo, bolo nič.
+
+    Index je odvodený súbor, ktorý sa postaví za sekundy, takže niet čo
+    zachraňovať. Zmazať a postaviť nanovo je aj jediný spôsob, ako zmena
+    schémy naozaj platí.
+  */
+  if (existsSync(cesta)) rmSync(cesta, { force: true });
+  const db = new DatabaseSync(cesta);
+  db.exec(`CREATE VIRTUAL TABLE useky USING fts5(
+    subor UNINDEXED, od UNINDEXED, doo UNINDEXED, text,
+    tokenize='unicode61 remove_diacritics 2')`);
+
+  const vloz = db.prepare('INSERT INTO useky (subor, od, doo, text) VALUES (?, ?, ?, ?)');
   let spolu = 0, suborov = 0;
   for (const f of readdirSync(priecinok)) {
     if (!f.endsWith('.md') || f.startsWith('.')) continue;
     const t = readFileSync(join(priecinok, f), 'utf8');
-    for (const u of useky(t)) { vloz.run(f, u.od, u.do, u.text, bezDiakritiky(u.text)); spolu++; }
+    for (const u of useky(t)) { vloz.run(f, u.od, u.do, u.text); spolu++; }
     suborov++;
   }
   db.close();
@@ -241,10 +258,9 @@ function podlaSuboru(cesta, n = 8) {
 function hladaj(vyraz, n = 8) {
   if (!existsSync(INDEX)) { console.error('No index. Build it first: --index'); process.exit(1); }
   const db = new DatabaseSync(INDEX);
-  // Dopyt sa pýta na obe podoby naraz — kto napíše bez diakritiky, nájde
-  // rovnako ako ten, kto ju napíše.
+  // Diakritiku skladá tokenizer na oboch stranách, takže dotaz je jedna vetva.
   const slova = vyraz.trim().split(/\s+/).filter(Boolean);
-  const dopyt = slova.map((s) => `("${s.replace(/"/g, '')}"* OR "${bezDiakritiky(s).replace(/"/g, '')}"*)`).join(' AND ');
+  const dopyt = slova.map((s) => `"${s.replace(/"/g, '')}"*`).join(' AND ');
   let r;
   try {
     r = db.prepare(
