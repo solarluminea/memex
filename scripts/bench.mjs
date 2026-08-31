@@ -257,7 +257,8 @@ async function pamat() {
     // Rovnaká podoba dotazu aj rovnaké preosiatie ako v search.mjs — inak sa
     // meria niečo iné, než sa používa.
     let r = [];
-    try { r = dopyt.all(slova.map((w) => `"${w}"*`).join(' OR ')); } catch { /* nič */ }
+    const vyraz = slova.map((w) => (w.length >= 7 ? `("${w}"* OR "${w.slice(0, w.length - 3)}"*)` : `"${w}"*`)).join(' OR ');
+    try { r = dopyt.all(vyraz); } catch { /* nič */ }
     r = bezOpakovani(r, 8);
     if (!r.length) { prazdne++; continue; }
     const p = r.findIndex((x) => u.body.some((b) => b.subor === x.subor && x.od <= b.do && x.doo >= b.od));

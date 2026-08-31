@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "memex",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Project memory, a code map, and telemetry — pointers and counts instead of retellings and hopes. Archives session transcripts before Claude Code deletes them, indexes them for full-text search, builds a trail of topics pointing at exact line ranges, generates a one-line-per-module map that says which file to open, links any file back to the conversations that changed it, and measures what navigation actually costs per edit.",
   "author": {
     "name": "Luminea PowerAI",

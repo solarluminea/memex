@@ -479,7 +479,7 @@ at. Over 202 topics it found four things in a row, and three were defects:
 | | MRR | R@8 | lines read per correct answer |
 |---|---|---|---|
 | as shipped before | 0.470 | 55.0 % | 120 |
-| **now** | **0.603** | **78.7 %** | **24** |
+| **now** | **0.622** | **79.2 %** | **18** |
 
 **`AND` was the wrong join.** A query was every word joined with `AND`, so all
 of them had to land in one chunk. `OR` and let bm25 rank — the same idea that
@@ -506,6 +506,15 @@ Two variants of that idea measured the same and were dropped: keying on the
 rendered snippet instead of the chunk (0.601), and on both (0.601). A duplicate
 copy in the archive usually starts at a different offset, so neither key catches
 it — that is the archive's problem, not the query's.
+
+**Slovak inflects the end of a word, and search had no stem.** A prefix query
+covers inflection only when the person types the shorter form: `"faktur"*`
+finds `faktúrach`, but somebody who types `faktúrami` gets `"fakturami"*`,
+which finds one form and no other. The map has had a stem for a long time; the
+archive had none. Adding the stem *beside* the full word rather than instead of
+it — the full form is the surer one — takes MRR 0.603 → 0.622 and R@3 69.3 →
+71.3 %. The stem alone, without the full form, is worse (0.600), so both
+branches are there on merit.
 
 **Chunk size had never been measured.** It is a real trade, not a right answer:
 

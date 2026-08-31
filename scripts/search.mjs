@@ -291,7 +291,25 @@ function hladaj(vyraz, n = 8) {
     R@1 33,7 → 47,5 %, a prázdnych odpovedí z 11,9 % na nulu. Drží na oboch
     poloviciach sady (0,505 a 0,580).
   */
-  const dopyt = slova.map((s) => `"${s.replace(/"/g, '')}"*`).join(' OR ');
+  /*
+    Každé slovo aj v kmeni — slovenčina mení koniec, nie začiatok.
+
+    Predpona v FTS5 (`"faktur"*`) pokrýva ohýbanie len vtedy, keď človek napíše
+    ten kratší tvar. Kto napíše „faktúrami", dostane `"fakturami"*` a to nenájde
+    „faktúra" ani „faktúrach". Mapa to rieši kmeňom už dávno; hľadanie ho
+    nemalo vôbec.
+
+    Pridáva sa, nie nahrádza: plný tvar je istejší, kmeň je záchrana. Namerané
+    na 202 témach — MRR 0,603 → 0,622, R@1 49,5 → 52,0 %, R@3 69,3 → 71,3 %.
+    Drží na oboch poloviciach sady (+0,009 a +0,030). Samotný kmeň bez plného
+    tvaru je horší (0,600), čiže obe vetvy sú tam zaslúžene.
+  */
+  const dopyt = slova
+    .map((s) => {
+      const w = s.replace(/"/g, '');
+      return w.length >= 7 ? `("${w}"* OR "${w.slice(0, w.length - 3)}"*)` : `"${w}"*`;
+    })
+    .join(' OR ');
   let r;
   try {
     /*
