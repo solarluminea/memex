@@ -29,6 +29,7 @@
  * Použitie:
  *   memex/scripts/search.mjs --index [priečinok]   postaví index
  *   memex/scripts/search.mjs "výraz" [--n 8]       hľadá
+ *   memex/scripts/search.mjs --osnova [prepis]     nadpisy s číslami riadkov
  */
 import { readFileSync, readdirSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join, basename } from 'node:path';
@@ -306,6 +307,42 @@ function hladaj(vyraz, n = 8) {
   db.close();
 }
 
+/*
+  Osnova prepisu — nadpisy, ktoré si Claude v odpovediach napísal sám.
+
+  Destilátor musí prejsť archív a rozhodnúť, čo stojí za záznam. Doteraz to
+  znamenalo prečítať prepisy: 16,7 MB, teda **5,5 milióna tokenov**. Osnova
+  tých istých prepisov má 109 kB — **35 tisíc**, čiže 156× menej — a hovorí
+  presne to, čo destilátor pre rozhodovanie potrebuje: aké témy tam sú a na
+  ktorom riadku.
+
+  Overené proti hotovému ukazovateľu: 66,8 % jeho záznamov má takýto nadpis
+  priamo v rozsahu, na ktorý ukazujú, alebo do štyridsiatich riadkov nad ním.
+  Nie je to teda náhrada destilátora — dve tretiny tém trafí a zvyšok nie —
+  ale je to zoznam miest, kde sa oplatí pozrieť, namiesto čítania všetkého.
+
+  Hlavičky ťahov sa vynechávajú: `## CLAUDE - 2026-08-19 14:22` je značka,
+  nie téma. Vynechávajú sa aj slovenské podoby, lebo archív môže niesť
+  záznamy staršieho nástroja.
+*/
+const HLAVICKA_TAHU = /^## (?:USER - |CLAUDE - |TY · |JA · )/;
+
+function osnova(nazovSuboru) {
+  const cesta = join(ARCHIVE, nazovSuboru);
+  if (!existsSync(cesta)) { console.error(`Not in the archive: ${nazovSuboru}`); return; }
+  const riadky = readFileSync(cesta, 'utf8').split('\n');
+  let n = 0;
+  for (let i = 0; i < riadky.length; i++) {
+    if (!/^#{2,4} /.test(riadky[i]) || HLAVICKA_TAHU.test(riadky[i])) continue;
+    const t = riadky[i].replace(/^#+\s*/, '').replace(/[*`]/g, '').trim();
+    // Príliš krátke je značka, príliš dlhé je veta z odpovede, nie nadpis.
+    if (t.length < 8 || t.length > 90) continue;
+    console.log(`${String(i + 1).padStart(7)}  ${t}`);
+    n++;
+  }
+  if (!n) console.log(`No headings in ${nazovSuboru} — read it with --file or search it.`);
+}
+
 const arg = process.argv.slice(2);
 if (arg[0] === '--index') {
   mkdirSync(ARCHIVE, { recursive: true });
@@ -320,5 +357,16 @@ else if (arg[0] === '--file') {
   if (!c) { console.error('Usage: search.mjs --file <path>'); process.exit(1); }
   podlaSuboru(c, Number(arg[arg.indexOf('--n') + 1]) || 8);
 }
-else if (!arg.length) console.log('Usage: search.mjs --index | --file <path> | "query" [--n 8]');
+else if (arg[0] === '--osnova') {
+  const f = arg.slice(1).find((a) => !a.startsWith('--'));
+  if (f) osnova(f.endsWith('.md') ? f : `${f}.md`);
+  else {
+    // Bez argumentu: osnova celého archívu, po prepisoch.
+    for (const x of readdirSync(ARCHIVE).filter((y) => y.endsWith('.md') && !y.startsWith('.')).sort()) {
+      console.log(`\n## ${x}`);
+      osnova(x);
+    }
+  }
+}
+else if (!arg.length) console.log('Usage: search.mjs --index | --file <path> | --osnova [transcript] | "query" [--n 8]');
 else hladaj(arg.filter((a) => !a.startsWith('--') && a !== arg[arg.indexOf('--n') + 1]).join(' '), Number(arg[arg.indexOf('--n') + 1]) || 8);

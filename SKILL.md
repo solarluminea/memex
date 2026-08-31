@@ -126,6 +126,7 @@ cue, not a defect.
 | "is any of this actually helping?" | `/memex:stats` |
 | "did a change help?" | `scripts/bench.mjs` (`veta`, `skratky`, `pamat`, `pravda`) |
 | "why does this file look like this?" | `search.mjs --file <path>` |
+| "what is in this transcript?" | `search.mjs --osnova <transcript>` |
 
 A SessionEnd hook runs the archiver, refreshes the full-text index and rebuilds
 the map, so none of them can be forgotten. The map costs no tokens to rebuild — it is a script, not a model.

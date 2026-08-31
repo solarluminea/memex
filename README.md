@@ -483,6 +483,29 @@ from the restored one. A benchmark is only as honest as the corpus under it.
 One aside worth its own line: rebuilding the table did not shrink the file at
 all. SQLite keeps freed pages. The script now deletes the index and builds a
 new one, which is also the only way a schema change actually takes effect.
+### Making the expensive step cheap
+
+Distilling is the only part of memex that costs model tokens, and it is the
+reason a trail falls behind: on the project measured here it covered 16 August
+to 22 August while the archive ran to the 31st, so a question about the last
+nine days had nowhere to point.
+
+The step that costs is deciding *what is worth an entry*, and that used to mean
+reading transcripts: 16.7 MB, about **5.5M tokens**. But Claude writes headings
+in its own answers, and a heading with a line number is the same shape as a
+trail entry. `search.mjs --osnova` prints them: **109 kB, about 35k tokens —
+156× less** — and it says exactly what the decision needs, which topics are in
+there and at which line.
+
+Checked against a finished trail: **66.8 %** of its entries have such a heading
+inside the range they point at, or within forty lines above it. So it is a
+sampling frame, not a replacement — a third of what a person would record is in
+running prose with nothing over it. The distiller now reads the outline first
+and opens only what looks worth opening.
+
+The other use is smaller and immediate: `--osnova <transcript>` answers "what
+is even in this session" for the price of a paragraph.
+
 ### What an answer costs
 
 Ten realistic queries, measured as characters of output — what the agent

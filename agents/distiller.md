@@ -31,11 +31,23 @@ searching.
 2. Work out which transcripts have no trail entries yet. Entries live in
    `.memex/trail/` and each carries a pointer to its transcript; compare
    against the files in `.memex/archive/`.
-3. Read transcripts with **`Read` using `offset`/`limit`**, in chunks, but
-   cover the **entire range** of each one. You need line numbers — `cat` won't
-   give you those.
-4. Write entries following the rules below.
-5. `node ${CLAUDE_PLUGIN_ROOT}/scripts/status.mjs` for a final check.
+3. **Start with the outline, not the transcript.**
+   `node ${CLAUDE_PLUGIN_ROOT}/scripts/search.mjs --osnova <transcript>` prints
+   every heading Claude wrote in its own answers, with the line number.
+   Measured on a real archive: 16.7 MB of transcripts against 109 kB of
+   outline — **5.5M tokens against 35k, 156× less** — and it says exactly what
+   this step needs to decide: which topics are in there and at which line.
+4. Read around the headings that look like they carry a decision, a measurement
+   or an abandoned approach, with **`Read` using `offset`/`limit`**. You need
+   line numbers — `cat` won't give you those.
+5. ⚠️ **The outline is a sampling frame, not the whole picture.** Checked
+   against a finished trail: 66.8 % of its entries have a heading inside the
+   range they point at or within forty lines above it. The other third is in
+   running prose with no heading over it, so a transcript that looks thin in
+   outline still deserves a pass — especially where the outline has a long gap
+   between headings.
+6. Write entries following the rules below.
+7. `node ${CLAUDE_PLUGIN_ROOT}/scripts/status.mjs` for a final check.
 
 ## What to look for
 
