@@ -81,8 +81,8 @@ A module's description comes from the first of three sources that yields one:
 3. **A schema field that bridges layers.** A column name is a data contract:
    the same word stands in the table, the API and the component. Fields that
    appear in only a handful of files are appended to the description, so
-    finds the client, the OAuth module and the sync route at
-   once. Fields that are everywhere (, in 250 files) are excluded —
+   `refreshToken` finds the client, the OAuth module and the sync route at
+   once. Fields that are everywhere (`dealId`, in 250 files) are excluded —
    they connect nothing, they connect everything.
 4. **Nothing.** A dash — a work list, not an error.
 
