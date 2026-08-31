@@ -111,6 +111,7 @@ cue, not a defect.
 | after new sessions pile up | `/memex:distill` |
 | "how's the memory doing?" | `/memex:status` |
 | "is any of this actually helping?" | `/memex:stats` |
+| "did a change to the map help?" | `scripts/bench.mjs` |
 | "why does this file look like this?" | `search.mjs --file <path>` |
 
 A SessionEnd hook runs the archiver, refreshes the full-text index and rebuilds

@@ -176,6 +176,7 @@ fresh tokens — numbers that mean something.
 | `/memex:distill` | build the trail (batch job, tens of minutes) |
 | `/memex:status` | health: what's archived, indexed, uncovered |
 | `/memex:stats` | what navigation costs: steps and tokens per edit |
+| `scripts/bench.mjs` | does the map find the right file? measured against git |
 | `search.mjs --file <path>` | which sessions touched this file, and where |
 
 A SessionEnd hook runs the archiver, refreshes the full-text index and rebuilds
@@ -272,6 +273,54 @@ That last one is the point of the name we didn't use. In Borges' story, Ireneo
 Funes remembers every leaf of every tree and, as a result, cannot think — he
 has no way to generalise or forget. Remembering everything isn't the goal.
 Knowing where to look is.
+
+## Does the map actually find the right file?
+
+The memory half was measured against blind judges. The map had no equivalent —
+every claim about it was "the problem is real" plus reasoning. `scripts/bench.mjs`
+closes that, and it needs nobody to grade it.
+
+**The answer key is already in git.** A commit message is a task and the files it
+changed are the correct answer: *"Power belongs next to the name, offer button
+right after"* → `DealsTable.tsx`. Nobody wrote those for this test, so they cannot
+be tuned to what the map happens to know.
+
+Each task is queried with the words from its own commit message, and the position
+of the real file is recorded. Measured over **300 real commits**:
+
+| | R@1 | R@3 | R@12 | MRR | found nothing |
+|---|---|---|---|---|---|
+| **full map** | 37.3 % | 50.3 % | 65.3 % | **0.458** | 34.7 % |
+| without stem fallback | 34.3 % | 46.3 % | 58.7 % | 0.417 | 41.3 % |
+| without schema seeds | 36.3 % | 50.3 % | 64.7 % | 0.452 | 35.3 % |
+| without ranking | 36.7 % | 51.3 % | 63.3 % | 0.455 | 36.7 % |
+| without abbreviation keys | 37.3 % | 50.3 % | 65.3 % | 0.458 | 34.7 % |
+| nothing but exact match | 33.7 % | 46.3 % | 56.0 % | 0.411 | 44.0 % |
+
+Read that carefully, because it is not flattering:
+
+- **Stem fallback is the one clear win.** Removing it costs 6.6 points of recall
+  and 9 % of MRR, and raises "found nothing" from 35 % to 41 %.
+- **Abbreviation keys change nothing at all.** Identical figures to three decimals.
+- **Schema seeds move MRR by 0.006**, which is noise at this sample size.
+- **Ranking is a wash** — two points better at R@12, one point worse at R@3.
+- Everything together is +11 % MRR over plain matching, and the stem is most of it.
+
+The honest reading is that two features have **no demonstrated benefit**. They are
+not removed, because the benchmark queries with words from commit messages, and a
+commit rarely says "kWp" or names a schema column — the cases those two were built
+for are under-represented by construction. But "we cannot show it helps" is where
+this stands, and it is written here rather than left out.
+
+To reproduce, from the project root:
+
+```
+node memex/scripts/bench.mjs                        # full map
+MEMEX_ABLATE=stem node memex/scripts/bench.mjs      # with that part switched off
+```
+
+⚠️ These numbers describe **one repository at one moment**. Run it on yours; the
+method transfers, the figures do not.
 
 ## What is measured, and what is only reasoned
 

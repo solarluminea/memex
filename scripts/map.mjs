@@ -67,6 +67,19 @@ const SKIP_DIR = new Set([
 /* Priečinky, kde zdrojový kód býva. Keď ani jeden neexistuje, mapuje sa koreň. */
 const ROOTS = ['src', 'lib', 'app', 'source', 'packages', 'internal', 'pkg', 'cmd', 'scripts', 'components'];
 
+/*
+  Vypínač jednotlivých vylepšení, pre meranie.
+
+  Bez neho sa dá povedať len „mapa nájde správny súbor v polovici prípadov" —
+  nie, ktorá jej časť to spôsobuje. `MEMEX_ABLATE=seeds,stem` odstaví polia zo
+  schémy a kmeň slova, takže rozdiel v úspešnosti je ich príspevok.
+
+  Je to háčik na meranie, nie nastavenie: prázdna premenná znamená plnú
+  funkčnosť a nikde inde sa nečíta. Bez neho by sa každé ďalšie vylepšenie
+  pridávalo na vieru.
+*/
+const ABLATE = new Set((process.env.MEMEX_ABLATE ?? '').split(',').map((x) => x.trim()).filter(Boolean));
+
 const config = existsSync(CONFIG) ? JSON.parse(readFileSync(CONFIG, 'utf8')) : {};
 const MAX_TERMS = config.maxTerms ?? 6;
 const MAX_LINE = config.maxLine ?? 120;
@@ -270,7 +283,7 @@ function fromInterface(source) {
   const uzTam = undiacritic(terms.join(' '));
   const skratky = allKeys
     .map((k) => k.value)
-    .filter((v, i, a) => a.indexOf(v) === i && SKRATKA.test(v) && !uzTam.includes(undiacritic(v)));
+    .filter((v, i, a) => a.indexOf(v) === i && !ABLATE.has('abbrev') && SKRATKA.test(v) && !uzTam.includes(undiacritic(v)));
 
   let text = [...terms, ...skratky].join(' · ');
   while (text.length > MAX_LINE && terms.length > 1) {
@@ -353,7 +366,7 @@ function describe(path) {
 }
 
 function build(files) {
-  const polia = schemaFields();
+  const polia = ABLATE.has('seeds') ? new Set() : schemaFields();
   const vSubore = new Map();
   const pocet = new Map();
   if (polia.size) {
@@ -435,8 +448,16 @@ const argv = process.argv.slice(2);
 const quiet = argv.includes('--quiet');
 const map = build(collect());
 
-if (argv[0] === 'find') {
-  const word = undiacritic(argv.slice(1).filter((a) => !a.startsWith('--')).join(' '));
+/**
+ * One lookup.
+ *
+ * A function rather than a straight branch because of `--batch`: building the
+ * map takes about half a second, and a benchmark that runs a few hundred
+ * queries spends all its time rebuilding the same thing. Batching turns twelve
+ * minutes into seconds, which is the difference between measuring a change and
+ * assuming it helped.
+ */
+function lookup(word, { all: showAll = false } = {}) {
   if (!word) {
     console.error('Usage: node memex/scripts/map.mjs find <word>');
     process.exit(1);
@@ -482,7 +503,7 @@ if (argv[0] === 'find') {
       je prípad témou súboru, v `overenie_cisel_pripadu` je len upresnením.
       Zlomok, aby nikdy neprebil to, KDE sa slovo našlo.
     */
-    return where + word.length / (file.length + 1);
+    return ABLATE.has('rank') ? 1 : where + word.length / (file.length + 1);
   };
   let all = map.modules.map((m) => ({ ...m, score: score(m) })).filter((m) => m.score > 0);
 
@@ -500,7 +521,7 @@ if (argv[0] === 'find') {
     Len ako záchrana pri nule, nikdy nie namiesto presnej zhody: kmeň rozšíri
     aj dotaz, ktorý zásahy má, a z pätnástich nálezov spraví stopäťdesiat.
   */
-  if (!all.length && word.length >= 6) {
+  if (!all.length && word.length >= 6 && !ABLATE.has('stem')) {
     const kmen = word.slice(0, Math.max(4, word.length - 3));
     all = map.modules
       .map((m) => ({ ...m, score: undiacritic(`${m.path} ${m.description ?? ''}`).includes(kmen) ? 1 : 0 }))
@@ -513,7 +534,7 @@ if (argv[0] === 'find') {
   // Orezané, lebo cieľom je otvoriť súbor, nie prečítať zoznam. `--all` je pre
   // prípad, keď hľadaný pojem je naozaj roztrúsený a treba vidieť rozsah.
   const LIMIT = 12;
-  const shown = argv.includes('--all') ? all : all.slice(0, LIMIT);
+  const shown = showAll ? all : all.slice(0, LIMIT);
   for (const m of shown) console.log(`${m.path}${m.line ? `:${m.line}` : ''} — ${m.description ?? '—'}`);
   if (!all.length) {
     console.log('Nothing. Try grep, or the archive: node memex/scripts/search.mjs "words"');
@@ -521,6 +542,25 @@ if (argv[0] === 'find') {
     console.log(`\n${shown.length} of ${all.length} modules, best match first. All of them: --all`);
   } else {
     console.log(`\n${all.length} modules.`);
+  }
+}
+
+if (argv[0] === 'find') {
+  if (argv.includes('--batch')) {
+    // Dotaz na riadok zo stdin, výsledky oddelené znakom, ktorý sa v cestách
+    // ani popisoch nevyskytuje.
+    const vstup = readFileSync(0, 'utf8');
+    for (const r of vstup.split('\n')) {
+      const q = undiacritic(r.trim());
+      if (!q) continue;
+      lookup(q, { all: false });
+      // Oddeľovač záznamov: NUL sa nevyskytuje v ceste ani v popise.
+      process.stdout.write(String.fromCharCode(0) + String.fromCharCode(10));
+    }
+  } else {
+    lookup(undiacritic(argv.slice(1).filter((a) => !a.startsWith('--')).join(' ')), {
+      all: argv.includes('--all'),
+    });
   }
   process.exit(0);
 }
