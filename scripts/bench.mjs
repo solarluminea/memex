@@ -215,6 +215,21 @@ function pravda(sada) {
   Odhalil, že prekryv úsekov bol dvojitá chyba — pozri komentár pri `useky()`
   v `search.mjs`.
 */
+/** To isté preosiatie opakovaní ako v `search.mjs` — merať sa má to, čo beží. */
+function bezOpakovani(r, n) {
+  const norm = (t) => undia(t).replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 300);
+  const videne = new Set();
+  const okna = [];
+  return r.filter((x) => {
+    const k = norm(x.text);
+    if (videne.has(k)) return false;
+    if (okna.some((o) => o.subor === x.subor && x.od <= o.doo + 2 && x.doo >= o.od - 2)) return false;
+    videne.add(k);
+    okna.push(x);
+    return true;
+  }).slice(0, n);
+}
+
 async function pamat() {
   const { DatabaseSync } = await import('node:sqlite');
   const { trail, index } = kde();
@@ -234,14 +249,16 @@ async function pamat() {
   const vzorka = sada.slice(SKIP, SKIP + (N === 300 ? sada.length : N));
 
   const db = new DatabaseSync(index);
-  const dopyt = db.prepare('SELECT subor, od, doo FROM useky WHERE useky MATCH ? ORDER BY bm25(useky) LIMIT 8');
+  const dopyt = db.prepare('SELECT subor, od, doo, text FROM useky WHERE useky MATCH ? ORDER BY bm25(useky) LIMIT 32');
   let r1 = 0, r3 = 0, r8 = 0, mrr = 0, prazdne = 0;
   for (const u of vzorka) {
     const slova = [...new Set(undia(u.nadpis).match(/[a-z0-9]{4,}/g) ?? [])].slice(0, 6);
     if (!slova.length) continue;
-    // Rovnaká podoba dotazu ako v search.mjs — inak sa meria niečo iné.
+    // Rovnaká podoba dotazu aj rovnaké preosiatie ako v search.mjs — inak sa
+    // meria niečo iné, než sa používa.
     let r = [];
     try { r = dopyt.all(slova.map((w) => `"${w}"*`).join(' OR ')); } catch { /* nič */ }
+    r = bezOpakovani(r, 8);
     if (!r.length) { prazdne++; continue; }
     const p = r.findIndex((x) => u.body.some((b) => b.subor === x.subor && x.od <= b.do && x.doo >= b.od));
     if (p < 0) continue;

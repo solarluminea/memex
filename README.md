@@ -439,7 +439,7 @@ at. Over 202 topics it found four things in a row, and three were defects:
 | | MRR | R@8 | lines read per correct answer |
 |---|---|---|---|
 | as shipped before | 0.470 | 55.0 % | 120 |
-| **now** | **0.584** | **75.2 %** | **25** |
+| **now** | **0.603** | **78.7 %** | **24** |
 
 **`AND` was the wrong join.** A query was every word joined with `AND`, so all
 of them had to land in one chunk. `OR` and let bm25 rank — the same idea that
@@ -453,6 +453,19 @@ added to the chunk but the line range was not extended — 2002 of 4064
 characters of a real chunk lay outside the range it reports, so a match there
 returned lines not containing the highlighted word — and every paragraph being
 indexed twice skewed bm25 against itself.
+
+**The same passage was answering twice.** An archive is appended to, transcripts
+repeat themselves, and the same paragraph sits in it more than once. Measured:
+**21.7 % of returned chunks were a literal repeat of one above** and 62.4 % of
+queries wasted at least one of their eight slots. Slots are the scarce thing
+here — eight pointers of which two are the same is an answer of six. Dropping
+repeats and adjacent windows of one passage: MRR 0.584 → 0.603, R@8 75.2 →
+78.7 %, for the same lines read.
+
+Two variants of that idea measured the same and were dropped: keying on the
+rendered snippet instead of the chunk (0.601), and on both (0.601). A duplicate
+copy in the archive usually starts at a different offset, so neither key catches
+it — that is the archive's problem, not the query's.
 
 **Chunk size had never been measured.** It is a real trade, not a right answer:
 
