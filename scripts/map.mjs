@@ -427,7 +427,23 @@ function build(files) {
         // Identifikátory súboru. Ktoré z nich niečo rozlišujú, sa rozhodne až
         // potom — dovtedy nie je známe, v koľkých súboroch ktorý je.
         const vlastne = new Set();
-        for (const m of text.matchAll(/\b[a-zA-Z][a-zA-Z0-9]{5,}\b/g)) vlastne.add(m[0].toLowerCase());
+        /*
+          `\b` je v JavaScripte ASCII a to je tu chyba, nie detail.
+
+          Pôvodne tu stálo `/\b[a-zA-Z][a-zA-Z0-9]{5,}\b/`, čiže sa zbierali len
+          slová bez diakritiky. Slovenské slovo z komentára alebo z popisku sa
+          doň nedostalo nikdy — a práve tým sa človek pýta. Namerané na jednom
+          module: 90 zachytených pojmov proti 116, teda 44 zahodených, medzi
+          nimi `prečítanie`, `požiadavky`, `prehliadača`, `orezávajú`.
+
+          Je to presne tá pasca, ktorú má tento projekt zapísanú vo vlastných
+          pravidlách — a porušoval ju vo vlastnom kóde.
+
+          Namerané po oprave: MRR 0,535 → 0,574, R@12 73,7 → 81,7 %, jedno slovo
+          0,242 → 0,263 a prázdnych odpovedí zo 7,0 na 2,3 %. Drží na oboch
+          poloviciach. Stavba mapy stojí 1,76 s namiesto 1,16.
+        */
+        for (const m of text.matchAll(/[\p{L}][\p{L}\p{N}]{5,}/gu)) vlastne.add(undiacritic(m[0]));
         idSubor.set(f, vlastne);
         for (const w of vlastne) idPocet.set(w, (idPocet.get(w) ?? 0) + 1);
       }
