@@ -33,6 +33,7 @@
 import { readFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { kde } from './kde.mjs';
 // node:sqlite landed in Node 22.5 and stabilised in 24. Without this guard the
 // failure is a bare "Cannot find module 'node:sqlite'", which reads like a
 // broken install rather than an old runtime.
@@ -50,8 +51,9 @@ try {
   process.exit(1);
 }
 
-const ARCHIVE = process.env.MEMEX_ARCHIVE || join(process.cwd(), '.memex', 'archive');
-const INDEX = process.env.MEMEX_INDEX || join(ARCHIVE, '.search.db');
+const CESTY = kde();
+const ARCHIVE = CESTY.archive;
+const INDEX = CESTY.index;
 
 /** Bez diakritiky a malými písmenami — druhá podoba každého úseku. */
 const bezDiakritiky = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -83,7 +85,7 @@ function useky(text, maxZnakov = 2000) {
 }
 
 function postavIndex(priecinok = ARCHIVE) {
-  const cesta = process.env.MEMEX_INDEX || join(priecinok, '.search.db');
+  const cesta = priecinok === ARCHIVE ? INDEX : join(priecinok, '.search.db');
   if (existsSync(cesta)) {
     // Prestavba je lacná a čiastočne dopísaný index je horší než žiadny.
     try { readFileSync(cesta); } catch { /* ignoruje sa */ }

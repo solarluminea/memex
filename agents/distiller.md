@@ -56,7 +56,7 @@ economical, here you don't.
 
 ## Shape
 
-One file per topic, `.memex/trail/<date>-<slug>.md`:
+One file per topic, `<trail dir>/<date>-<slug>.md`:
 
 ```
 # 2026-08-20 · Task steps can't be edited from the settings screen
@@ -67,6 +67,13 @@ Where this is in the transcript:
 
 The text is deliberately not repeated here — the transcript is the truth.
 ```
+
+⚠️ `../archive/` in that example is **the default layout, not a constant**. The
+link is the path from the entry you are writing to the transcript it points at —
+work it out from where those two files actually are. A project that renamed its
+folders (`MEMEX_TRAIL`, `MEMEX_ARCHIVE`, or the `--trail-dir` flag) still gets
+correct entries this way, and a copied literal gives it 153 links into a folder
+that does not exist. That has happened; it is why this paragraph is here.
 
 The rules this stands on:
 

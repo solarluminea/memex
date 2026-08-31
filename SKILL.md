@@ -140,14 +140,37 @@ why it was abandoned, and what the numbers were.
 
 ## Configuration
 
-| variable | default |
-|---|---|
-| `MEMEX_ROOT` | `.memex` |
-| `MEMEX_ARCHIVE` | `.memex/archive` |
-| `MEMEX_TRAIL` | `.memex/trail` |
-| `MEMEX_MAP` | `.memex/MAP.md` |
-| `MEMEX_STATS` | `.memex/stats.jsonl` |
-| `MEMEX_PROJECT` | derived from the project path |
+A project that keeps its memory somewhere other than `.memex/` writes it once in
+**`memex.json`** at the project root, and every command and hook follows:
+
+```json
+{
+  "archive": "docs/session-archive",
+  "trail": "docs/trail",
+  "trailIndex": "docs/TRAIL.md"
+}
+```
+
+⚠️ Do this **before** running anything, and put the file in git. Paths passed
+per-invocation are the failure mode this replaces: one project ran the distiller
+with flags and the hook without them, and ended up with the same 39 transcripts
+in two places, a trail index whose 153 links all pointed at a folder that did
+not exist, and a full-text index built over the copy nobody referenced. Nothing
+errored — every write succeeded.
+
+| key in `memex.json` | env var | default |
+|---|---|---|
+| `root` | `MEMEX_ROOT` | `.memex` |
+| `archive` | `MEMEX_ARCHIVE` | `<root>/archive` |
+| `index` | `MEMEX_INDEX` | `<archive>/.search.db` |
+| `trail` | `MEMEX_TRAIL` | `<root>/trail` |
+| `trailIndex` | `MEMEX_TRAIL_INDEX` | `<root>/TRAIL.md` |
+| `map` | `MEMEX_MAP` | `<root>/MAP.md` |
+| `stats` | `MEMEX_STATS` | `<root>/stats.jsonl` |
+| — | `MEMEX_PROJECT` | derived from the project path |
+
+A flag wins over the env var, which wins over `memex.json`, which wins over the
+default — a one-off run has to be able to override what is on disk.
 
 The map picks its own source folders (`src`, `lib`, `app`, `packages`, …) and
 skips the generated ones. To override that, put `.memex/map.json` next to it:

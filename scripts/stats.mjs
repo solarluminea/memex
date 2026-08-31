@@ -35,10 +35,12 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSy
 import { createInterface } from 'node:readline';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
+import { kde } from './kde.mjs';
 
 const ROOT = process.env.MEMEX_PROJECT_ROOT || process.cwd();
-const MEMEX = process.env.MEMEX_ROOT || join(ROOT, '.memex');
-const STATS = process.env.MEMEX_STATS || join(MEMEX, 'stats.jsonl');
+const CESTY = kde(ROOT);
+const MEMEX = CESTY.root;
+const STATS = CESTY.stats;
 const STATE = join(MEMEX, '.stats-state.json');
 
 /** Kľúč, pod ktorým Claude Code drží prepisy tohto projektu. */

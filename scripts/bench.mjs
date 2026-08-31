@@ -56,6 +56,14 @@ function ulohy(dotazyZo) {
 
 const zoSlov = (s) => [...new Set(undia(s).match(/[a-z]{6,}/g) ?? [])].filter((w) => !STOP.has(w)).slice(0, SLOV);
 const zoSkratiek = (s) => [...new Set((s.match(SKRATKA) ?? []).map((x) => x.toLowerCase()))];
+/*
+  Celá veta ako jeden dotaz.
+
+  Takto sa pýta človek a takto zadanie podá agent, ktorý ho dostal od človeka.
+  Predchádzajúce dva režimy rozdelia vetu na slová a tým zakryjú, či to mapa
+  vôbec zvládne — treba to merať tak, ako sa to naozaj použije.
+*/
+const zVety = (s) => (undia(s).match(/[a-z]{3,}/g) ?? []).length ? [undia(s).replace(/\s+/g, ' ').trim()] : [];
 
 /** Jeden beh mapy na všetky dotazy naraz — inak sa mapa stavia znova pre každý. */
 function odpovede(dotazy) {
@@ -77,21 +85,31 @@ const zasah = (cesta, subory) => subory.some((s) => cesta === s || cesta.endsWit
 
 function recall(sada) {
   const vys = odpovede(sada.flatMap((u) => u.slova));
-  let i = 0, r1 = 0, r3 = 0, r12 = 0, mrr = 0, nic = 0;
+  let i = 0, r1 = 0, r3 = 0, r12 = 0, mrr = 0, prazdne = 0;
   for (const u of sada) {
-    let naj = null;
+    let naj = null, nieco = false;
     for (const _ of u.slova) {
-      const p = (vys[i++]?.cesty ?? []).findIndex((c) => zasah(c, u.subory));
+      const v = vys[i++];
+      if (v?.cesty.length) nieco = true;
+      const p = (v?.cesty ?? []).findIndex((c) => zasah(c, u.subory));
       if (p >= 0 && (naj === null || p + 1 < naj)) naj = p + 1;
     }
-    if (naj === null) { nic++; continue; }
+    /*
+      Prázdna odpoveď, nie „nenašlo správne".
+
+      Predtým tu stál stĺpec `nič`, ktorý bol presne `100 − R@12` — tá istá vec
+      napísaná dvakrát a k tomu pomenovaná zle. Toto meria niečo iné a
+      užitočné: koľkokrát mapa nevrátila vôbec nič a treba siahnuť po grepe.
+    */
+    if (!nieco) prazdne++;
+    if (naj === null) continue;
     mrr += 1 / naj;
     if (naj <= 1) r1++;
     if (naj <= 3) r3++;
     if (naj <= 12) r12++;
   }
   const p = (n) => ((n / sada.length) * 100).toFixed(1).padStart(5);
-  return `n=${String(sada.length).padStart(3)}  R@1 ${p(r1)}%  R@3 ${p(r3)}%  R@12 ${p(r12)}%  MRR ${(mrr / sada.length).toFixed(3)}  nič ${p(nic)}%`;
+  return `n=${String(sada.length).padStart(3)}  R@1 ${p(r1)}%  R@3 ${p(r3)}%  R@12 ${p(r12)}%  MRR ${(mrr / sada.length).toFixed(3)}  prázdne ${p(prazdne)}%`;
 }
 
 /**
@@ -156,4 +174,5 @@ function pravda(sada) {
 const stitok = (process.env.MEMEX_ABLATE ? `bez: ${process.env.MEMEX_ABLATE}` : 'plná mapa').padEnd(22);
 if (REZIM === 'pravda') console.log(`${stitok}\n${pravda(ulohy(zoSlov))}`);
 else if (REZIM === 'skratky') console.log(`${stitok}${recall(ulohy(zoSkratiek))}`);
+else if (REZIM === 'veta') console.log(`${stitok}${recall(ulohy(zVety))}`);
 else console.log(`${stitok}${recall(ulohy(zoSlov))}`);

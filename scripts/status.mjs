@@ -11,25 +11,27 @@
  *   node status.mjs --trail    rewrite .memex/TRAIL.md from the directory
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, dirname, sep } from 'node:path';
+import { kde } from './kde.mjs';
 
-/**
- * Paths can be overridden by flag as well as by environment variable.
- *
- * The flags exist because of npm scripts: `MEMEX_ARCHIVE=... node ...` does not
- * work in `package.json` on Windows without an extra dependency, and a project
- * that keeps its archive somewhere other than `.memex/` would have no way to
- * call this.
- */
-const arg = (name) => {
-  const i = process.argv.indexOf(`--${name}`);
-  return i > -1 ? process.argv[i + 1] : null;
-};
+const CESTY = kde();
+const ROOT = CESTY.root;
+const ARCHIVE = CESTY.archive;
+const TRAIL = CESTY.trail;
+const INDEX = CESTY.trailIndex;
+/*
+  Odkaz sa počíta z ciest, nehádajú sa z názvu.
 
-const ROOT = arg('root') ?? process.env.MEMEX_ROOT ?? join(process.cwd(), '.memex');
-const ARCHIVE = arg('archive') ?? process.env.MEMEX_ARCHIVE ?? join(ROOT, 'archive');
-const TRAIL = arg('trail-dir') ?? process.env.MEMEX_TRAIL ?? join(ROOT, 'trail');
-const INDEX = arg('trail-into') ?? join(ROOT, 'TRAIL.md');
+  Tu stálo natvrdo `trail/`, hoci priečinok sa dá prestaviť cez `--trail-dir`
+  aj `MEMEX_TRAIL`. Projekt, ktorý si ho pomenoval po svojom, dostal rozcestník
+  so 153 odkazmi a všetkých 153 viedlo do priečinka, ktorý neexistuje. Nič
+  nezlyhalo nahlas: súbor sa zapísal, vyzeral správne a otvoril sa až ten,
+  kto naň klikol.
+
+  Cesta z miesta, kde rozcestník leží, do miesta, kde ležia záznamy — to je
+  jediná definícia, ktorá platí pre každé nastavenie.
+*/
+const PREFIX = (relative(dirname(INDEX), TRAIL) || '.').split(sep).join('/');
 
 const kB = (x) => (x / 1024).toFixed(1);
 const MB = (x) => (x / 1048576).toFixed(1);
@@ -71,7 +73,7 @@ Generated — do not edit by hand.
   let d = '';
   for (const x of z) {
     if (x.date !== d) { out += `\n## ${x.date}\n\n`; d = x.date; }
-    out += `- ${x.expired ? '~~' : ''}[${x.heading}](trail/${x.file})${x.expired ? '~~ *(superseded)*' : ''}\n`;
+    out += `- ${x.expired ? '~~' : ''}[${x.heading}](${PREFIX}/${x.file})${x.expired ? '~~ *(superseded)*' : ''}\n`;
   }
   writeFileSync(INDEX, out, 'utf8');
   return out.length;
@@ -83,15 +85,38 @@ if (process.argv.includes('--trail')) {
   if (!z.length) { console.error(`No trail entries in ${TRAIL}.`); process.exit(1); }
   const n = writeTrail(z);
   console.log(`Trail: ${z.length} topics, ${kB(n)} kB -> ${INDEX}`);
+  /*
+    Odkaz sa overí, nepredpokladá.
+
+    Rozcestník s rozbitými odkazmi je horší než žiadny: vyzerá ako hotová
+    pamäť, a že nikam nevedie, sa zistí až pri kliknutí. Toto je lacné —
+    jeden `existsSync` — a chytí každý ďalší preklep v cestách.
+  */
+  const rozbite = z.filter((x) => !existsSync(join(dirname(INDEX), PREFIX, x.file)));
+  if (rozbite.length) {
+    console.error(`\n⚠ ${rozbite.length} of ${z.length} links do not resolve — e.g. ${PREFIX}/${rozbite[0].file}`);
+    console.error(`  The index is at ${INDEX}, the entries are in ${TRAIL}.`);
+    process.exit(1);
+  }
   process.exit(0);
 }
 
 // ── health report ──────────────────────────────────────────────────────────
-const transcripts = existsSync(ARCHIVE) ? readdirSync(ARCHIVE).filter((f) => f.endsWith('.md')) : [];
+/*
+  Prepisy, nie všetko s príponou `.md`.
+
+  Bodka na začiatku znamená pracovný súbor — `.davka.md` je dávka pre
+  destilátor, nie relácia. Bez tejto podmienky ju hlásenie počítalo medzi
+  prepisy a večne pýtalo záznam do ukazovateľa pre súbor, ktorý žiadna relácia
+  nie je.
+*/
+const transcripts = existsSync(ARCHIVE)
+  ? readdirSync(ARCHIVE).filter((f) => f.endsWith('.md') && !f.startsWith('.'))
+  : [];
 const bytes = transcripts.reduce((a, f) => a + statSync(join(ARCHIVE, f)).size, 0);
 
 console.log(`Archive    ${transcripts.length} transcripts, ${MB(bytes)} MB`);
-console.log(`Full-text  ${existsSync(join(ARCHIVE, '.search.db')) ? 'built' : 'MISSING — node memex/scripts/search.mjs --index'}`);
+console.log(`Full-text  ${existsSync(CESTY.index) ? 'built' : 'MISSING — node memex/scripts/search.mjs --index'}`);
 console.log(`Trail      ${z.length} topics, ${z.reduce((a, x) => a + x.pointers.length, 0)} pointers`);
 if (z.some((x) => x.expired)) console.log(`           ${z.filter((x) => x.expired).length} marked "Valid until"`);
 

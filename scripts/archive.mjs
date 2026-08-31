@@ -40,6 +40,7 @@ import { createInterface } from 'node:readline';
 import { createReadStream } from 'node:fs';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
+import { kde } from './kde.mjs';
 
 /**
  * The project key Claude Code stores transcripts under.
@@ -81,7 +82,7 @@ if (!SOURCE) {
   process.exit(1);
 }
 
-const TARGET = process.env.MEMEX_ARCHIVE ?? join(process.cwd(), '.memex', 'archive');
+const TARGET = kde().archive;
 const STATE = join(TARGET, '.state.json');
 
 /** Content blocks that carry meaning. Everything else is tool exhaust. */

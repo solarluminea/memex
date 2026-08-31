@@ -42,10 +42,12 @@
  */
 import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join, relative, basename, dirname, sep } from 'node:path';
+import { kde } from './kde.mjs';
 
 const ROOT = process.env.MEMEX_PROJECT_ROOT || process.cwd();
-const MEMEX = process.env.MEMEX_ROOT || join(ROOT, '.memex');
-const TARGET = process.env.MEMEX_MAP || join(MEMEX, 'MAP.md');
+const CESTY = kde(ROOT);
+const MEMEX = CESTY.root;
+const TARGET = CESTY.map;
 const CONFIG = join(MEMEX, 'map.json');
 
 /*
@@ -538,12 +540,12 @@ function lookup(word, { all: showAll = false } = {}) {
   const bezDynamickych = (p) => p.replace(/\[[^\]]+\]/g, '');
   const akoUrl = bezCisel !== word ? bezCisel : null;
 
-  const score = (m) => {
+  const score = (m, slovo = word) => {
     const file = undiacritic(basename(m.path));
     const dir = undiacritic(dirname(m.path));
     const desc = undiacritic(m.description ?? '');
     let where =
-      (file.includes(word) ? 4 : 0) + (dir.includes(word) ? 2 : 0) + (desc.includes(word) ? 1 : 0);
+      (file.includes(slovo) ? 4 : 0) + (dir.includes(slovo) ? 2 : 0) + (desc.includes(slovo) ? 1 : 0);
     if (!where && akoUrl && bezDynamickych(dir).includes(akoUrl)) where = 1.5;
     if (!where) return 0;
     /*
@@ -555,9 +557,60 @@ function lookup(word, { all: showAll = false } = {}) {
       je prípad témou súboru, v `overenie_cisel_pripadu` je len upresnením.
       Zlomok, aby nikdy neprebil to, KDE sa slovo našlo.
     */
-    return ABLATE.has('rank') ? 1 : where + word.length / (file.length + 1);
+    return ABLATE.has('rank') ? 1 : where + slovo.length / (file.length + 1);
   };
   let all = map.modules.map((m) => ({ ...m, score: score(m) })).filter((m) => m.score > 0);
+
+  /*
+    Dotaz o viacerých slovách.
+
+    Doslovná zhoda hľadá celú vetu ako jeden reťazec, takže „odoslanie faktúry
+    klientovi" nevrátilo nikdy nič — namerané na 300 zadaniach: **sto percent**
+    prepadlo. Pritom presne takto sa pýta človek a takto zadanie ďalej podá
+    agent, ktorý ho od človeka dostal. Bola to najväčšia diera v mape a
+    benchmark ju nevidel, lebo jej podsúval jednotlivé slová.
+
+    Tri veci naraz, každá zmeraná zvlášť (MRR z 0,000):
+
+    - **Váha podľa vzácnosti.** Slovo, ktoré sedí na tristo modulov,
+      nerozlišuje nič; slovo na tri rozlišuje všetko. Zoznam bezvýznamných
+      slov netreba — „pre" a „cez" sa umlčia samy. → 0,351
+    - **Kmeň po slovách.** Záchrana za celý dotaz tu nestačí: stačí, aby jedno
+      slovo trafilo čokoľvek, a ostatné sa už v inom tvare neskúsia. → 0,365
+    - **Pokrytie otázky.** Súbor, ktorý sa dotýka viacerých slov zadania, je
+      pravdepodobnejšie ten hľadaný než súbor s jedným slovom v názve. → 0,424
+
+    Váha pokrytia je 1 — skóre krát počet trafených slov. Vyššie hodnoty merali
+    o 0,005 lepšie a to je pri tejto vzorke šum; jednotka má aspoň význam, ktorý
+    sa dá povedať vetou.
+  */
+  if (!all.length && !ABLATE.has('veta')) {
+    const slova = [...new Set(word.match(/[a-z0-9]{3,}/g) ?? [])];
+    if (slova.length > 1) {
+      const N = map.modules.length;
+      const suma = new Map();
+      const pokrytie = new Map();
+      for (const t of slova) {
+        let zasahy = map.modules.map((m) => [m, score(m, t)]).filter(([, sc]) => sc > 0);
+        // Slovo, ktoré nesedí v tvare, v akom bolo napísané, sa skúsi v kmeni.
+        // Hlas má tichší: kmeň je dohad, doslovná zhoda nie.
+        let istota = 1;
+        if (!zasahy.length && t.length >= 6 && !ABLATE.has('stem')) {
+          const kmen = t.slice(0, Math.max(4, t.length - 3));
+          zasahy = map.modules.map((m) => [m, score(m, kmen)]).filter(([, sc]) => sc > 0);
+          istota = 0.6;
+        }
+        // Slovo na viac než tretinu projektu nie je otázka, je to výplň.
+        if (!zasahy.length || zasahy.length > N / 3) continue;
+        const vaha = Math.log(N / zasahy.length) * istota;
+        for (const [m, sc] of zasahy) {
+          suma.set(m, (suma.get(m) ?? 0) + sc * vaha);
+          pokrytie.set(m, (pokrytie.get(m) ?? 0) + 1);
+        }
+      }
+      all = [...suma].map(([m, sc]) => ({ ...m, score: sc * pokrytie.get(m) }));
+    }
+  }
 
   /*
     Keď presná zhoda nevráti nič, skús kmeň slova.
