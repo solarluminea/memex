@@ -128,12 +128,24 @@ reason to, because the button says "Deals" and the file is `DealsTable.tsx`.
 In a codebase whose interface isn't in English, that's the only place the user's
 own vocabulary is written down, and it's the vocabulary they phrase tasks in.
 Measured on such a project: of 48 files with no header comment, 47 got a usable
-description this way. Searching for `kWp` returned nothing before and returns
-exactly one file after — the right one.
+description this way.
 
-The key in parentheses matters as much as the label. The column reads *Power* on
+The key in parentheses matters as much as the label. A column reads *Power* on
 screen and lives as `powerKwp` in the data; without the pair, the map is findable
-by one and not the other.
+by one and not the other. On the project this was built for, searching `kWp` went
+from nothing to exactly one file — the right one.
+
+**And two hours later it returned nothing again.** Another session moved the
+power figure next to the name, the `Power` column stopped existing, and the label
+the map had been matching on went with it. Nothing broke: the map reported the
+code as it now is, which is the whole point of generating it.
+
+It is worth stating plainly, because it bounds what any measurement of this tool
+can claim. **A number about the map is a number about a moment in a repository.**
+The method — read what the interface says, pair it with the key beside it — is
+what carries over; the example does not. When the map comes up empty for a string
+that is not a label, that is grep's job, and `grep -rl kWp src/` answers it in
+milliseconds.
 
 ## Measuring instead of hoping
 
@@ -260,6 +272,51 @@ That last one is the point of the name we didn't use. In Borges' story, Ireneo
 Funes remembers every leaf of every tree and, as a result, cannot think — he
 has no way to generalise or forget. Remembering everything isn't the goal.
 Knowing where to look is.
+
+## What is measured, and what is only reasoned
+
+The memory half of this plugin was measured properly: 22 questions, three runs,
+blind judges, six arms, described further down. The map and the telemetry were
+not, and it would be dishonest to let the first table lend them credibility.
+
+The distinction that matters is between measuring that a **problem exists** and
+measuring that a **fix helped**. Almost everything below is the first kind.
+
+**Measured — the problem was real:**
+
+| finding | number |
+|---|---|
+| components beside pages missing from the map | 223, of which 159 already had a header |
+| files with no header that got a usable description from interface strings | 47 of 48 |
+| reading the whole map vs. one lookup | ~34k tokens vs. 50–800 |
+| `\b(?:nazov)` never matching the accented `názov:` | 6 occurrences invisible |
+| a broad query before ranking was added | 145 hits, alphabetical |
+| `unicode61 remove_diacritics` on Slovak | works, in both modes |
+| JSON output proposed as a saving | 23 % **longer** than text |
+| transcripts carrying edited file paths | 35 of 37 |
+| median source file (against the case for slicing) | 123 lines |
+| import targets used from more than one place | 504 of 1015 |
+
+**Not measured — the fix is reasoning, not evidence:**
+
+That the map lowers what a real task costs. That printing `file.tsx:246` saves a
+round trip. That better ranking means less reading. That building the index in
+the hook saves the turn it would take to build it by hand. Each is plausible and
+none is demonstrated.
+
+The plainest evidence for how open this is comes from the telemetry itself:
+
+```
+map used in 0 of 37 sessions
+```
+
+At the time of writing, the map has not been used once in real work. Every
+number about it comes from its author testing it. The telemetry rows are
+therefore a **baseline taken before**, not a result.
+
+This is the reason `/memex:stats` refuses to print savings. The honest claim
+today is: *the problems were verified, the design follows from them, and the
+measurement to judge it is running.* Anything stronger would be advertising.
 
 ## What is not built yet
 
