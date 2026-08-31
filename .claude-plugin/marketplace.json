@@ -1,6 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "memex",
+  "description": "Memex — project memory and a code map for Claude Code. One plugin, measured rather than promised.",
   "owner": {
     "name": "Luminea PowerAI",
     "email": "solar@luminea.sk"
