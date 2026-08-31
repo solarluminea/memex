@@ -128,7 +128,51 @@ const transcripts = existsSync(ARCHIVE)
 const bytes = transcripts.reduce((a, f) => a + statSync(join(ARCHIVE, f)).size, 0);
 
 console.log(`Archive    ${transcripts.length} transcripts, ${MB(bytes)} MB`);
-console.log(`Full-text  ${existsSync(CESTY.index) ? 'built' : 'MISSING — node memex/scripts/search.mjs --index'}`);
+/*
+  Index sa neoveruje tým, že súbor existuje.
+
+  Dvakrát za dva dni sa stalo, že index bol na mieste, mal správnu schému,
+  odpovedal — a pritom pokrýval zlomok archívu. Raz preto, že ho prepísal iný
+  nástroj so staršou schémou; raz preto, že prestavbu zabil `| head` a zostalo
+  436 úsekov z troch prepisov namiesto 37 080 z tridsiatich deviatich.
+
+  V oboch prípadoch trvalo pol hodiny zistiť, že pokazený je korpus a nie kód,
+  lebo hlásenie hovorilo len „built". Tieto tri riadky by to boli povedali
+  hneď: koľko prepisov index pozná, či nezmeškal niečo novšie, a koľko úsekov
+  v ňom vlastne je.
+
+  Číta sa len počet — je to jeden dotaz nad hotovým indexom, nie prehľadanie.
+*/
+async function stavIndexu() {
+  if (!existsSync(CESTY.index)) return { hlaska: 'MISSING — node memex/scripts/search.mjs --index' };
+  let DatabaseSync;
+  try { ({ DatabaseSync } = await import('node:sqlite')); } catch { return { hlaska: 'built (Node 22.5+ needed to inspect it)' }; }
+  try {
+    const db = new DatabaseSync(CESTY.index);
+    const useky = db.prepare('SELECT count(*) c FROM useky').get().c;
+    const suborov = db.prepare('SELECT count(DISTINCT subor) c FROM useky').get().c;
+    db.close();
+    const kedy = statSync(CESTY.index).mtimeMs;
+    const novsie = transcripts.filter((f) => statSync(join(ARCHIVE, f)).mtimeMs > kedy);
+    return { useky, suborov, novsie };
+  } catch (e) {
+    return { hlaska: `UNREADABLE — ${String(e.message).slice(0, 60)}` };
+  }
+}
+
+const ix = await stavIndexu();
+if (ix.hlaska) {
+  console.log(`Full-text  ${ix.hlaska}`);
+} else {
+  console.log(`Full-text  ${ix.useky} chunks from ${ix.suborov} of ${transcripts.length} transcripts`);
+  // Prepis, ktorý index nepozná, sa nedá nájsť — a nič to inak nepovie.
+  if (ix.suborov < transcripts.length) {
+    console.log(`! the index is missing ${transcripts.length - ix.suborov} transcripts — node memex/scripts/search.mjs --index`);
+  } else if (ix.novsie.length) {
+    const koľko = ix.novsie.length === 1 ? '1 transcript has' : `${ix.novsie.length} transcripts have`;
+    console.log(`! ${koľko} changed since the index was built — node memex/scripts/search.mjs --index`);
+  }
+}
 console.log(`Trail      ${z.length} topics, ${z.reduce((a, x) => a + x.pointers.length, 0)} pointers`);
 if (z.some((x) => x.expired)) console.log(`           ${z.filter((x) => x.expired).length} marked "Valid until"`);
 

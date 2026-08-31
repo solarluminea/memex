@@ -119,7 +119,7 @@ term is read by a person and can go stale, so the line stays one line and every
 word on it has to earn its place. Behind it the map also matches on distinctive
 identifiers that are never printed — derived from the files, rebuilt every run,
 so they cannot go stale. Measured: that took MRR from 0.374 to 0.535 and
-truthful pointers from 68 % to 93 %, with the output unchanged.
+truthful pointers from 68 % to 99 %, with the output unchanged.
 
 ⚠️ When the map comes up empty, that is grep's cue, not a defect.
 
@@ -131,7 +131,7 @@ truthful pointers from 68 % to 93 %, with the output unchanged.
 | regularly, so history isn't lost | `/memex:archive` |
 | "why did we do it this way?" | `/memex:search <topic>` |
 | after new sessions pile up | `/memex:distill` |
-| "how's the memory doing?" | `/memex:status` |
+| "how's the memory doing?" | `/memex:status` — also checks the index covers every transcript |
 | "is any of this actually helping?" | `/memex:stats` |
 | "did a change help?" | `scripts/bench.mjs` (`veta`, `skratky`, `pamat`, `pravda`) |
 | "why does this file look like this?" | `search.mjs --file <path>` |
