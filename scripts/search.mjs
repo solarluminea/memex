@@ -31,7 +31,7 @@
  *   memex/scripts/search.mjs "výraz" [--n 8]       hľadá
  *   memex/scripts/search.mjs --osnova [prepis]     nadpisy s číslami riadkov
  */
-import { readFileSync, readdirSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, mkdirSync, rmSync, renameSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { kde } from './kde.mjs';
@@ -124,8 +124,27 @@ function postavIndex(priecinok = ARCHIVE) {
     zachraňovať. Zmazať a postaviť nanovo je aj jediný spôsob, ako zmena
     schémy naozaj platí.
   */
-  if (existsSync(cesta)) rmSync(cesta, { force: true });
-  const db = new DatabaseSync(cesta);
+  /*
+    Stavia sa vedľa a až hotové sa premenuje.
+
+    Prerušená prestavba nechávala index, ktorý vyzeral platne — správna schéma,
+    čitateľné úseky — a odpovedal z tretiny archívu. Namerané, keď sa to stalo
+    naozaj: 436 úsekov z troch prepisov namiesto 31 559 z tridsiatich deviatich,
+    najvyšší zaindexovaný riadok 3504 pri prepise dlhom 172 383. Hľadanie
+    fungovalo, len takmer nič nenašlo, a MRR spadlo z 0,622 na 0,222.
+
+    Stačilo na to `| head` na konci príkazu: rúra sa zavrie, proces dostane
+    EPIPE a skončí v polovici zápisu. Kto to spustí z hooku alebo prerušením
+    Ctrl+C, dopadne rovnako.
+
+    Premenovanie je v rámci jedného priečinka atomické, takže buď je tam starý
+    index, alebo celý nový — nikdy polovica.
+  */
+  const docasny = `${cesta}.stavia`;
+  // Aj žurnál: po zabitom behu zostane `-journal` vedľa a bez neho by SQLite
+  // otvorilo rozostavaný súbor ako rozrobenú transakciu.
+  for (const x of [docasny, `${docasny}-journal`]) if (existsSync(x)) rmSync(x, { force: true });
+  const db = new DatabaseSync(docasny);
   db.exec(SCHEMA);
 
   const vloz = db.prepare('INSERT INTO useky (subor, od, doo, text) VALUES (?, ?, ?, ?)');
@@ -137,6 +156,8 @@ function postavIndex(priecinok = ARCHIVE) {
     suborov++;
   }
   db.close();
+  if (existsSync(cesta)) rmSync(cesta, { force: true });
+  renameSync(docasny, cesta);
   if (!TICHO) console.log(`Index: ${spolu} chunks from ${suborov} transcripts -> ${cesta}`);
 }
 
@@ -446,7 +467,24 @@ else if (arg[0] === '--osnova') {
     }
   }
 }
-else if (!arg.length) console.log('Usage: search.mjs --index | --file <path> | --osnova [transcript] | "query" [--n 8]');
+else if (arg[0] === '--batch') {
+  /*
+    Dotaz na riadok zo vstupu — aby sa dalo merať to, čo sa naozaj spúšťa.
+
+    Benchmark si dotaz doteraz skladal sám a pýtal sa databázy priamo. Meral
+    tým vlastnú kópiu, nie tento skript — a presne tak prežila chyba, ktorá
+    rozbila každý dotaz bez `--n`: benchmark ňou neprechádzal a všetky ručné
+    skúšky boli písané s `--n`.
+
+    Oddeľovač je NUL, ktorý sa v ceste ani v ukážke nevyskytuje.
+  */
+  const pocet = Number(arg[arg.indexOf('--n') + 1]) || 8;
+  for (const r of readFileSync(0, 'utf8').split('\n')) {
+    if (r.trim()) hladaj(r.trim(), pocet);
+    process.stdout.write(String.fromCharCode(0) + '\n');
+  }
+}
+else if (!arg.length) console.log('Usage: search.mjs --index | --file <path> | --osnova [transcript] | --batch | "query" [--n 8]');
 else {
   /*
     `--n` sa hľadá raz a jeho index sa overí.

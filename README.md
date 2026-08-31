@@ -445,6 +445,38 @@ of the word, so literal containment is the wrong test for it — the number that
 matters beside it is the second column. The stem buys recall and pays with
 roughly twice the list to read, in the quarter of queries where it fires.
 
+### The benchmark was measuring its own copy of the code
+
+The map benchmark calls `map.mjs` the way a user does. The memory benchmark
+did not — it rebuilt the query itself and went to SQLite directly. So the one
+thing it never exercised was `search.mjs`.
+
+That is exactly how a bug survived that broke **every** query without `--n`:
+`arg.indexOf('--n') + 1` returns `arg[0]` when the flag is absent, so the whole
+query was filtered out of itself. The benchmark did not go through that line,
+and every manual check had been typed with `--n`.
+
+`search.mjs --batch` now exists and the benchmark goes through it. The number
+moved **up**: 0.604 measured against the hand-rolled query, **0.647** through
+the real one. The benchmark had been understating the shipped code, because it
+capped the query at six words and the real script uses the whole question —
+the same lesson the map learned.
+
+### An interrupted rebuild left an index that looked fine
+
+Found by breaking it: a diagnostic command ended in `| head`, the pipe closed,
+the process died on EPIPE **in the middle of writing the index** — and left a
+file with the right schema, readable rows, and **436 chunks from three
+transcripts instead of 37 080 from thirty-nine**. Search kept working and
+answered from a tenth of the archive. MRR read 0.222 instead of 0.647 and
+nothing anywhere said why.
+
+A hook killed at session end, or one Ctrl+C, does the same thing. The index is
+now built beside the old one and renamed when it is complete, which within a
+directory is atomic: either the previous index or the whole new one, never a
+third of one. Verified by killing a rebuild mid-write — the 38.3 MB index was
+still there afterwards and the half-built file sat next to it.
+
 ### Two ideas this method rejected
 
 Both looked good on one number and did not survive a second.
@@ -479,7 +511,7 @@ at. Over 202 topics it found four things in a row, and three were defects:
 | | MRR | R@8 | lines read per correct answer |
 |---|---|---|---|
 | as shipped before | 0.470 | 55.0 % | 120 |
-| **now** | **0.622** | **79.2 %** | **18** |
+| **now** | **0.647** | **82.2 %** | **18** |
 
 **`AND` was the wrong join.** A query was every word joined with `AND`, so all
 of them had to land in one chunk. `OR` and let bm25 rank — the same idea that

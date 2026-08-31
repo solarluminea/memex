@@ -230,37 +230,51 @@ function bezOpakovani(r, n) {
   }).slice(0, n);
 }
 
-async function pamat() {
-  const { DatabaseSync } = await import('node:sqlite');
-  const { trail, index } = kde();
+function pamat() {
+  const { trail } = kde();
   if (!existsSync(trail)) return `ukazovateľ nie je v ${trail}`;
-  if (!existsSync(index)) return `index nie je postavený — node memex/scripts/search.mjs --index`;
 
   const sada = [];
   for (const f of readdirSync(trail).filter((x) => x.endsWith('.md'))) {
     const t = readFileSync(join(trail, f), 'utf8');
     const h = /^# (20\d\d-\d\d-\d\d)\s*·\s*(.+)$/m.exec(t);
     if (!h) continue;
-    const body = [...t.matchAll(/\]\(([^)#]+)#L(\d+)-L(\d+)\)/g)]
-      .map((m) => ({ subor: m[1].split('/').pop(), od: +m[2], do: +m[3] }));
+    const body = [...t.matchAll(/\]\(([^)#]+)#L(\d+)(?:-L(\d+))?\)/g)]
+      .map((m) => ({ subor: m[1].split('/').pop(), od: +m[2], do: +(m[3] ?? m[2]) }));
     if (body.length) sada.push({ nadpis: h[2].trim(), body });
   }
   if (!sada.length) return `žiadne použiteľné záznamy v ${trail}`;
   const vzorka = sada.slice(SKIP, SKIP + (N === 300 ? sada.length : N));
 
-  const db = new DatabaseSync(index);
-  const dopyt = db.prepare('SELECT subor, od, doo, text FROM useky WHERE useky MATCH ? ORDER BY bm25(useky) LIMIT 32');
+  /*
+    Pýta sa cez `search.mjs`, nie cez vlastnú kópiu dotazu.
+
+    Predtým si benchmark skladal výraz sám a chodil do SQLite priamo. Meral
+    tým vlastný kód, nie ten, čo sa spúšťa — a tak prežila chyba, ktorá
+    rozbila každý dotaz bez `--n`. Benchmark ňou neprechádzal.
+
+    Dotaz je celý nadpis, tak ako by ho napísal človek. Rozdelenie na slová,
+    kmeň, preosiatie opakovaní aj kontrola schémy sú vnútri skriptu, kde
+    patria — a merajú sa tým, že tadiaľ prejde každý dotaz.
+  */
+  const vystup = execFileSync(
+    'node',
+    [fileURLToPath(new URL('./search.mjs', import.meta.url)), '--batch', '--n', '8'],
+    {
+      cwd: APP, encoding: 'utf8', maxBuffer: 1 << 28,
+      input: vzorka.map((u) => u.nadpis.replace(/\s+/g, ' ')).join('\n'),
+    },
+  );
+  const bloky = vystup.split(String.fromCharCode(0));
+
   let r1 = 0, r3 = 0, r8 = 0, mrr = 0, prazdne = 0;
-  for (const u of vzorka) {
-    const slova = [...new Set(undia(u.nadpis).match(/[a-z0-9]{4,}/g) ?? [])].slice(0, 6);
-    if (!slova.length) continue;
-    // Rovnaká podoba dotazu aj rovnaké preosiatie ako v search.mjs — inak sa
-    // meria niečo iné, než sa používa.
-    let r = [];
-    const vyraz = slova.map((w) => (w.length >= 7 ? `("${w}"* OR "${w.slice(0, w.length - 3)}"*)` : `"${w}"*`)).join(' OR ');
-    try { r = dopyt.all(vyraz); } catch { /* nič */ }
-    r = bezOpakovani(r, 8);
+  for (let i = 0; i < vzorka.length; i++) {
+    const r = (bloky[i] ?? '').split('\n')
+      .map((x) => /^([\w.-]+\.md):(\d+)-(\d+)$/.exec(x.trim()))
+      .filter(Boolean)
+      .map((m) => ({ subor: m[1], od: +m[2], doo: +m[3] }));
     if (!r.length) { prazdne++; continue; }
+    const u = vzorka[i];
     const p = r.findIndex((x) => u.body.some((b) => b.subor === x.subor && x.od <= b.do && x.doo >= b.od));
     if (p < 0) continue;
     mrr += 1 / (p + 1);
@@ -268,7 +282,6 @@ async function pamat() {
     if (p < 3) r3++;
     if (p < 8) r8++;
   }
-  db.close();
   const pc = (x) => ((x / vzorka.length) * 100).toFixed(1).padStart(5);
   return `n=${String(vzorka.length).padStart(3)}  R@1 ${pc(r1)}%  R@3 ${pc(r3)}%  R@8 ${pc(r8)}%  MRR ${(mrr / vzorka.length).toFixed(3)}  prázdne ${pc(prazdne)}%`;
 }
@@ -277,5 +290,5 @@ const stitok = (process.env.MEMEX_ABLATE ? `bez: ${process.env.MEMEX_ABLATE}` : 
 if (REZIM === 'pravda') console.log(`${stitok}\n${pravda(ulohy(zoSlov))}`);
 else if (REZIM === 'skratky') console.log(`${stitok}${recall(ulohy(zoSkratiek))}`);
 else if (REZIM === 'veta') console.log(`${stitok}${recall(ulohy(zVety))}`);
-else if (REZIM === 'pamat') console.log(`${'archív'.padEnd(22)}${await pamat()}`);
+else if (REZIM === 'pamat') console.log(`${'archív'.padEnd(22)}${pamat()}`);
 else console.log(`${stitok}${recall(ulohy(zoSlov))}`);
