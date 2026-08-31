@@ -216,10 +216,17 @@ script. And a glossary flattens real distinctions: "power" is inverter power,
 panel power, reserved capacity, and AC power, and one alias entry would merge
 them all.
 
-**Filling descriptions with unpaired keys.** Tried and reverted (the reasoning
-is in `map.mjs`). A table has fifteen keys and there is no way to know which
-two someone will search for; picking the first two added noise and missed the
-one that was wanted.
+**Filling descriptions with *any* unpaired key.** Tried and reverted: a table
+has fifteen keys and "the first two" added `mesacnaPlatba` while missing the
+`vykonKwp` that was wanted.
+
+↳ **The narrow version of this was later built and works.** The flaw was the
+selection, not the idea. A key carrying an abbreviation or a unit — `kWp`,
+`DPH`, `IČO` — is never in the label, because the screen says "Power", and is
+exactly what a person searches by. Measured: of 16 files with keys, **2** have
+such a key outside the label, one of them the case that started all this. A
+heuristic that adds one word to two files beats one that adds two words to
+every file.
 
 **JSON output as a saving.** Measured on a real row: 111 characters against 90,
 so **23 % longer**, not 40 % shorter. Field names and quotes are not free.
@@ -234,10 +241,16 @@ tool result at the end of the prompt, past the cache breakpoints, which Claude
 Code sets and a plugin cannot see. The instinct is right and the mechanism does
 not apply.
 
-**Indexing error messages from tool output.** It would require keeping tool
-results, and dropping them is what makes the archive 3.6 MB instead of 467 MB.
-Errors that were actually discussed are already in the archive as text;
-measured, 1 transcript in 37 contains one.
+**Indexing *whole* tool outputs to catch errors.** Dropping tool results is
+what makes the archive 3.6 MB instead of 467 MB, and truncating everything to
+500 characters grew it fourfold while adding no searchable sentence.
+
+↳ **One line per failure was measured separately and built.** The rejection
+had generalised from "all output" to "any output", and the numbers are not
+close: keeping a single line, deduplicated per session, and only where it names
+a compiler error or a failed assertion, costs **0.28 %** of the archive — 403
+lines across 38 sessions, of which 383 point at real source files. A failing
+type-check is the one kind of tool output somebody looks for again later.
 
 **Writing generated descriptions back into source headers.** A plugin that
 edits source files to improve its own index is a plugin that can corrupt a
@@ -288,6 +301,14 @@ word with the stored entry — the case embeddings exist for — a plain index o
 a greppable archive scored 6/6, the same as a vector one. Do not revisit this
 without a measurement that beats that one.
 
+↳ **But that measurement tested synonyms, not inflection**, and the gap was
+real. In Slovak — in any inflected language — the ending changes and the stem
+does not: "faktúrami", "faktúr", "faktúrou". Measured on eight such queries,
+five returned nothing at all. The fix is not vectors, it is `slice`: when an
+exact lookup finds nothing, retry on the stem. Those five then returned 52, 82,
+37, 15 and 1 module. Built, and only as a fallback — a stem applied eagerly
+turns fifteen hits into a hundred and fifty.
+
 ---
 
 ## Built since this file was written
@@ -304,6 +325,10 @@ measured, 24 renames in 300 commits, including a whole folder moving from
 for former names and searches under those too. Before the fix it returned a
 fraction of the history and looked like a complete answer, which is the worst
 way to be wrong.
+
+**Stem fallback, abbreviation keys, and failure lines** — all three came out of
+re-reading the rejections above and finding that each had thrown out a good
+idea along with a bad implementation. Details in the entries they belong to.
 
 ---
 

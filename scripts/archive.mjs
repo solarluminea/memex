@@ -96,6 +96,35 @@ function toolSummary(b) {
   return `[Tool: ${b.name}]`;
 }
 
+/*
+  The one line of a tool result worth keeping.
+
+  Dropping tool results is what makes this archive 3.6 MB instead of 467 MB, and
+  a truncation experiment (first 500 characters of everything) grew it fourfold
+  while adding no searchable sentence. That measurement is what this rule is
+  carved out of, and the carve-out is narrow on purpose: **one line**, and only
+  when it names a failure.
+
+  Measured on three real transcripts: 32 such lines, 8.3 kB, which is 0.047 % of
+  the archive. The reason to keep them is that a compiler error or a failing
+  assertion is the one kind of tool output somebody searches for later — "we've
+  seen this before" is worth a tenth of a percent.
+
+  The pattern is deliberately anchored to line starts and known formats. An
+  unanchored /error/ matches every JSON payload with an `error` field, which is
+  how the first version filled up with API responses that failed at nothing.
+*/
+const FAILURE = /^\s*(Error:|Uncaught |[\w./\\-]+\(\d+,\d+\): error TS\d+|error TS\d+|FAIL |AssertionError|Traceback \(most recent)/;
+
+function failureLine(result) {
+  const text = typeof result === 'string' ? result : '';
+  if (!text) return null;
+  for (const l of text.split('\n')) {
+    if (FAILURE.test(l)) return l.trim().slice(0, 160);
+  }
+  return null;
+}
+
 /** System injections are nobody's words — they don't belong in the archive. */
 const SYSTEM_BLOCK = /^<(system-reminder|command-name|local-command|command-message)/;
 
@@ -138,6 +167,16 @@ for (const file of sessions) {
   const firstTime = !existsSync(out);
   let line = 0, added = '';
   let day = state[key]?.day ?? '';
+  /*
+    Každé zlyhanie raz za reláciu.
+
+    Bez toho sa jedna chyba prekladu zapíše toľkokrát, koľkokrát niekto spustí
+    preklad — namerané 721 riadkov, z ktorých drvivá väčšina boli tie isté
+    hlásenia z vygenerovaných typov. Informácia je, že sa to stalo; koľkokrát
+    sa to zopakovalo, je vidieť aj tak, lebo volania nástrojov v archíve
+    zostávajú.
+  */
+  const videneZlyhania = new Set();
 
   const reader = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
   for await (const r of reader) {
@@ -154,6 +193,13 @@ for (const file of sessions) {
     for (const b of blocks(m.content)) {
       if (b.type === 'text') text += cleanText(b.text);
       else if (b.type === 'tool_use') calls += toolSummary(b) + '\n';
+      else if (b.type === 'tool_result') {
+        const zlyhanie = failureLine(b.content);
+        if (zlyhanie && !videneZlyhania.has(zlyhanie)) {
+          videneZlyhania.add(zlyhanie);
+          calls += `[Failed] ${zlyhanie}\n`;
+        }
+      }
     }
     if (text || calls) {
       const who = j.type === 'user' ? 'USER' : 'CLAUDE';

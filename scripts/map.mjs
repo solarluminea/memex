@@ -70,6 +70,17 @@ const ROOTS = ['src', 'lib', 'app', 'source', 'packages', 'internal', 'pkg', 'cm
 const config = existsSync(CONFIG) ? JSON.parse(readFileSync(CONFIG, 'utf8')) : {};
 const MAX_TERMS = config.maxTerms ?? 6;
 const MAX_LINE = config.maxLine ?? 120;
+/*
+  Skratky a jednotky, ktoré stoja v kóde a nikdy nie na obrazovke.
+
+  Zámerne krátky a doménový zoznam. `vs` a `ks` v ňom nie sú: sú to dve
+  písmená, ktoré sa trafia doprostred bežných slov — namerané, `vs` označilo
+  kľúč `vsetky` za skratku.
+*/
+const SKRATKA = new RegExp(
+  `(${(config.abbreviations ?? ['kwp', 'kwh', 'mwh', 'dph', 'ico', 'dic', 'iban', 'pdf', 'csv', 'xml', 'url', 'api', 'eur', 'ean', 'gps', 'html']).join('|')})`,
+  'i',
+);
 const skipDirs = new Set([...SKIP_DIR, ...(config.skip ?? [])]);
 
 // ── collecting files ───────────────────────────────────────────────────────
@@ -238,25 +249,33 @@ function fromInterface(source) {
   });
 
   /*
-    Skúšané a zavrhnuté: dopĺňať kľúče, ktoré nemajú svoj popisok.
+    Kľúč, ktorý nesie skratku alebo jednotku.
 
-    Dôvod znel dobre. `vykonKwp` prestal mať `header: 'Výkon'` v tej chvíli,
-    keď sa výkon v rozhraní presunul k menu — stĺpec v kóde zostal, ale `find
-    kwp` prestalo vracať čokoľvek. Doplniť osirelý kľúč vyzeralo ako oprava.
+    Prvý pokus dopĺňať osirelé kľúče som vrátil, a správne: výber „prvé dva
+    v poradí" pridal `mesacnaPlatba` a hľadaný `vykonKwp` minul. Chyba ale
+    nebola v myšlienke, bola vo výbere.
 
-    Nie je. Kľúčov je v tabuľke pätnásť a nedá sa povedať, ktoré dva z nich
-    niekto bude hľadať; výber „prvé dva v poradí výskytu" pridal do popisu
-    `mesacnaPlatba` a `vykonKwp` netrafil vôbec. Vymenil by teda istý šum za
-    neistý zásah, a to v každom module naraz.
+    Skratka je iná trieda. `kWp`, `DPH`, `IČO`, `PDF` sa v popisku nikdy
+    neobjavia — na obrazovke stojí „Výkon", nie „vykonKwp" — a zároveň sú to
+    presne tie slová, ktorými sa človek pýta. Kľúč ako `meno` alebo `stav` je
+    v popisku obsiahnutý a nepridáva nič.
 
-    Na hľadanie reťazca, ktorý nie je popiskom, je grep. `grep -rl kWp src/`
-    vráti ten súbor okamžite a nič nestojí. Mapa má povedať, ktorý súbor
-    otvoriť — nie vedieť všetko.
+    Namerané na šestnástich súboroch s kľúčmi: **dva** majú takýto kľúč mimo
+    popisku, a jeden z nich je práve `PripadyTabulka.tsx → vykonKwp`. Úzke
+    zámerne — heuristika, ktorá pridá jedno slovo do dvoch súborov, je lepšia
+    než tá, čo pridá dve slová do všetkých.
+
+    Zoznam skratiek je doménový; `map.json` ho vie prepísať cez `abbreviations`.
   */
-  let text = terms.join(' · ');
+  const uzTam = undiacritic(terms.join(' '));
+  const skratky = allKeys
+    .map((k) => k.value)
+    .filter((v, i, a) => a.indexOf(v) === i && SKRATKA.test(v) && !uzTam.includes(undiacritic(v)));
+
+  let text = [...terms, ...skratky].join(' · ');
   while (text.length > MAX_LINE && terms.length > 1) {
     terms.pop();
-    text = terms.join(' · ');
+    text = [...terms, ...skratky].join(' · ');
   }
   /*
     Aj riadok, na ktorom prvý popisok stojí.
@@ -387,7 +406,30 @@ if (argv[0] === 'find') {
     */
     return where + word.length / (file.length + 1);
   };
-  const all = map.modules.map((m) => ({ ...m, score: score(m) })).filter((m) => m.score > 0);
+  let all = map.modules.map((m) => ({ ...m, score: score(m) })).filter((m) => m.score > 0);
+
+  /*
+    Keď presná zhoda nevráti nič, skús kmeň slova.
+
+    Slovenčina — a každý flektívny jazyk — mení koniec slova, nie začiatok:
+    „faktúrami", „faktúr", „faktúrou". Kto píše dotaz, píše tvar, ktorý mu
+    práve prišiel na um, a ten sa s tvarom v kóde zhoduje málokedy.
+
+    Namerané na ôsmich takých dotazoch: päť nevrátilo nič a s kmeňom vrátili
+    52, 82, 37, 15 a 1 modul. To je presne ten prípad, na ktorý sa inde
+    nasadzujú embeddingy — a tu ho rieši `slice`.
+
+    Len ako záchrana pri nule, nikdy nie namiesto presnej zhody: kmeň rozšíri
+    aj dotaz, ktorý zásahy má, a z pätnástich nálezov spraví stopäťdesiat.
+  */
+  if (!all.length && word.length >= 6) {
+    const kmen = word.slice(0, Math.max(4, word.length - 3));
+    all = map.modules
+      .map((m) => ({ ...m, score: undiacritic(`${m.path} ${m.description ?? ''}`).includes(kmen) ? 1 : 0 }))
+      .filter((m) => m.score > 0);
+    if (all.length) console.log(`No exact match for "${word}" — showing "${kmen}…" instead.\n`);
+  }
+
   all.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
 
   // Orezané, lebo cieľom je otvoriť súbor, nie prečítať zoznam. `--all` je pre
