@@ -304,6 +304,55 @@ be tuned to what the map happens to know.
 - **Abbreviations do nothing here** — and that turned out to be a fact about the
   test, not the feature.
 
+### Ask it in a sentence, not a word
+
+The table above gives each task up to five separate single-word queries and
+keeps the best. Nobody gets five tries. Measured on the same 300 tasks, one
+query each:
+
+| one query, as a person would type it | R@1 | R@3 | R@12 | MRR |
+|---|---|---|---|---|
+| a single word | 18.7 % | 32.0 % | 44.7 % | 0.264 |
+| **the whole sentence** | 35.7 % | 51.0 % | 65.7 % | **0.443** |
+
+The sentence is worth **68 % more** than the best single word a person is
+likely to pick. Until recently it was worth nothing at all: the map matched
+the query as one literal string, so every multi-word question returned empty —
+300 of 300. The benchmark had never noticed, because it fed the map one word
+at a time.
+
+What makes a sentence work is three things, each measured on its own:
+
+| | MRR |
+|---|---|
+| matching the whole phrase literally | 0.000 |
+| each word weighted by how rare it is | 0.351 |
+| + the stem tried per word, not per query | 0.365 |
+| + files that touch more of the question ranked higher | 0.424 |
+| + an exact path segment counted apart from a substring | 0.443 |
+
+Rarity weighting is what removes the need for a stopword list: a word that
+hits a third of the project is dropped by its own weight, and `pre`, `cez`,
+`the` and `for` need no special-casing in any language.
+
+The last line is the one worth stealing. `zakazky` as a **whole path segment**
+names a screen; `zakazky` inside `PoznamkaZakazky` is a fragment of a name.
+Counting them as the same number is what made "on the Orders screen you see
+orders, not fourteen filters" return `PoznamkaZakazky.tsx`. Splitting them
+moved every mode at once — sentence 0.421 → 0.443, single word 0.251 → 0.264,
+abbreviations 0.270 → 0.372.
+
+### How a tuning idea gets rejected here
+
+The obvious neighbouring idea — give the description more weight, since it is
+the one part a person wrote — measured **+0.013 MRR** over 300 tasks. It was
+dropped, because splitting the set in half showed +0.020 on one half and
+**0.000** on the other. An improvement that lives in one half of the sample is
+the sample, not an improvement.
+
+`BENCH_SKIP=150 BENCH_N=150` exists for exactly this. It costs one extra run
+and it has already killed one change that a single number said to keep.
+
 ### The test that could not test
 
 A query in the table above is a word of six letters or more taken from a commit

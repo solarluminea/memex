@@ -544,8 +544,29 @@ function lookup(word, { all: showAll = false } = {}) {
     const file = undiacritic(basename(m.path));
     const dir = undiacritic(dirname(m.path));
     const desc = undiacritic(m.description ?? '');
+    /*
+      Presná zhoda je iná trieda dôkazu než podreťazec.
+
+      Namerané zlyhanie: „Na Zákazkách vidno zákazky, nie štrnásť filtrov" má
+      správne `src/app/zakazky/Zoznam.tsx`, a mapa vrátila `PoznamkaZakazky.tsx`
+      a `RiadokZakazky.tsx`. Slovo pomenúvalo obrazovku — teda priečinok — a
+      vyhrali súbory, ktoré ho mali len ako kus názvu.
+
+      `zakazky` ako celý úsek cesty a `zakazky` uprostred `PoznamkaZakazky` sú
+      dve rôzne veci; predtým to bolo jedno číslo. To isté pri názve súboru:
+      názov, ktorý sa slovu rovná, verzus názov, ktorý ho obsahuje.
+
+      Namerané (MRR): veta 0,421 → 0,443, jednoslovný dotaz 0,251 → 0,264,
+      skratky 0,270 → 0,372. Drží na oboch poloviciach sady, čo predchádzajúci
+      pokus — dvíhať váhu popisu — nesplnil: +0,020 na prvej, nula na druhej.
+      Plató je široké, nie špička, takže to nie je trafené do vzorky.
+    */
+    const useky = dir.split('/').filter(Boolean);
+    const holy = file.replace(/\.[^.]+$/, '');
     let where =
-      (file.includes(slovo) ? 4 : 0) + (dir.includes(slovo) ? 2 : 0) + (desc.includes(slovo) ? 1 : 0);
+      (useky.includes(slovo) ? 5 : dir.includes(slovo) ? 2 : 0) +
+      (holy === slovo ? 5 : file.includes(slovo) ? 3 : 0) +
+      (desc.includes(slovo) ? 2 : 0);
     if (!where && akoUrl && bezDynamickych(dir).includes(akoUrl)) where = 1.5;
     if (!where) return 0;
     /*

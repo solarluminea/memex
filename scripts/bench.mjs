@@ -29,6 +29,14 @@ const MAP = fileURLToPath(new URL('./map.mjs', import.meta.url));
 const REZIM = process.argv[2] ?? 'slova';
 const N = Number(process.env.BENCH_N ?? 300);
 const SLOV = Number(process.env.BENCH_W ?? 5);
+/*
+  Koľko úloh preskočiť — aby sa dala sada rozdeliť na dve polovice.
+
+  Vylepšenie, ktoré vyjde len na jednej polovici, je náhoda vydávaná za nález.
+  `BENCH_SKIP=150 BENCH_N=150` dá druhých stopäťdesiat úloh a odpoveď na to,
+  či zmena drží, alebo sa len trafila do vzorky.
+*/
+const SKIP = Number(process.env.BENCH_SKIP ?? 0);
 
 const STOP = new Set(['ktora', 'ktore', 'ktory', 'nielen', 'namiesto', 'pretoze', 'preto',
   'tlacidlo', 'pridane', 'pridany', 'opravene', 'oprava', 'zmena', 'zmenene', 'presun',
@@ -41,6 +49,7 @@ function ulohy(dotazyZo) {
   const raw = execFileSync('git', ['log', '--no-merges', '-n', '3000', '--format=%x00%s', '--name-only'],
     { cwd: APP, encoding: 'utf8', maxBuffer: 1 << 28 });
   const out = [];
+  let preskocene = 0;
   for (const blok of raw.split('\0').slice(1)) {
     const [sprava, ...riadky] = blok.split('\n');
     const subory = riadky.map((r) => r.trim())
@@ -48,6 +57,7 @@ function ulohy(dotazyZo) {
     if (!subory.length || subory.length > 6) continue;
     const slova = dotazyZo(sprava);
     if (!slova.length) continue;
+    if (preskocene < SKIP) { preskocene++; continue; }
     out.push({ sprava: sprava.trim(), subory, slova });
     if (out.length >= N) break;
   }
