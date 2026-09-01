@@ -35,7 +35,7 @@
  * Incremental: a second run appends only new turns, based on the line count in
  * `.state.json`, so it is safe to run daily.
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, appendFileSync, renameSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { createReadStream } from 'node:fs';
 import { join, basename } from 'node:path';
@@ -157,6 +157,32 @@ if (!existsSync(TARGET)) {
 const state = existsSync(STATE) ? JSON.parse(readFileSync(STATE, 'utf8')) : {};
 
 /*
+  Stav sa zapisuje po každej relácii, nie raz na konci behu.
+
+  Ťahy sa pripisujú priebežne (`appendFileSync` v slučke), takže keď sa zápis
+  polohy nechá až za slučku, každé prerušenie behu nechá prepisy zapísané a
+  polohu nezapísanú — a ďalší beh pripíše presne ten istý úsek znova. Nič
+  nezlyhá nahlas, len archív pri každej ďalšej relácii povyrastie o dávku,
+  ktorá tam už je.
+
+  Namerané 1. 9. 2026 na projekte so 48 reláciami: `.state.json` stál na mieste
+  od 22:00 predošlého dňa, kým prepisy rástli ďalej, a v archíve bolo 25 152
+  opakovaných ťahov v súvislých dávkach — najdlhšia 2 427 ťahov, jeden prepis
+  narástol z 244 unikátnych ťahov na 1 942. Po oprave stojí prerušený beh
+  nanajvýš jednu reláciu.
+
+  Píše sa cez dočasný súbor a premenovanie: `writeFileSync` prerušený uprostred
+  nechá stav useknutý, a pokazený `JSON.parse` pri ďalšom behu znamená, že sa
+  začne od nuly a pripíše sa všetko znovu — teda presne tá istá porucha, len
+  horšia. `rename` je na jednom zväzku atomický.
+*/
+function zapisStav() {
+  const docasny = `${STATE}.tmp`;
+  writeFileSync(docasny, JSON.stringify(state, null, 2));
+  renameSync(docasny, STATE);
+}
+
+/*
   Koľko ťahov už v archíve je — poistka pre prípad, že stav chýba.
 
   Stav bol jediný zdroj pravdy a to je zle: keď sa stratí, prepíše sa cudzím
@@ -179,7 +205,62 @@ function tahovVArchive(cesta) {
   const moje = (t.match(/^## (?:USER|CLAUDE) - /gm) ?? []).length;
   return { moje, cudzie: vsetky - moje };
 }
-let newTurns = 0, newChars = 0, touched = 0, cudzichSuborov = 0;
+/*
+  Dávky ťahov, ktoré v prepise už raz stoja, sa nepripisujú druhýkrát.
+
+  Nie je to poistka proti tomuto skriptu — je to vlastnosť zdroja. Keď sa
+  kontext relácie zhutní alebo sa relácia obnoví, Claude Code zapíše celý úsek
+  správ do JSONL znova, a archivátor ho poslušne prepíše do archívu ešte raz.
+  Namerané 1. 9. 2026 na troch prepisoch: 30,5 %, 43,6 % a 44,9 % ťahov
+  v zdrojovom JSONL malo presne zhodného predchodcu, a archív postavený jedným
+  čistým behom mal 10 235 opakovaných ťahov v súvislých dávkach.
+
+  Zahadzuje sa len **súvislá séria troch a viac** opakovaní. Dva rovnaké ťahy
+  vedľa seba vyrobí aj bežná práca — `[Tool: ToolSearch]` dvakrát v tej istej
+  minúte je jeden ťah dvakrát, nie chyba — a rozoznať sa to nedá, tak sa toho
+  radšej nedotýkame. Namerané na tom istom archíve: v sériách 1–2 leží 1 396
+  opakovaní, v sériách 3+ ich je 25 152.
+
+  Porovnáva sa proti tomu, čo v prepise **už je**, nie len v rámci pripisovanej
+  dávky: inkrementálny beh vidí zakaždým iný kus a bez toho by dávku rozdelenú
+  medzi dva behy neuvidel ani jeden z nich.
+*/
+const DAVKA = 3;
+/** Kľúč ťahu: konce riadkov ani koncové medzery nerozhodujú (archív má oboje). */
+const klucTahu = (t) => t.replace(/\r/g, '').replace(/[ \t]+$/gm, '').trim();
+
+function bezDavok(tahy, cestaKPrepisu) {
+  if (!tahy.length) return tahy;
+  const videne = new Set();
+  if (existsSync(cestaKPrepisu)) {
+    const t = readFileSync(cestaKPrepisu, 'utf8');
+    let akt = null;
+    for (const r of t.split('\n')) {
+      if (/^## (?:USER|CLAUDE) - \d{4}-\d{2}-\d{2} \d{2}:\d{2}\r?$/.test(r)) {
+        if (akt) videne.add(klucTahu(akt.join('\n')));
+        akt = [r];
+      } else if (akt) akt.push(r);
+    }
+    if (akt) videne.add(klucTahu(akt.join('\n')));
+  }
+  const duplikat = tahy.map((t) => {
+    const k = klucTahu(t);
+    const bol = videne.has(k);
+    videne.add(k);
+    return bol;
+  });
+  const zahodit = new Array(tahy.length).fill(false);
+  for (let i = 0; i < tahy.length; ) {
+    if (!duplikat[i]) { i++; continue; }
+    let j = i;
+    while (j < tahy.length && duplikat[j]) j++;
+    if (j - i >= DAVKA) for (let k = i; k < j; k++) zahodit[k] = true;
+    i = j;
+  }
+  return tahy.filter((_, i) => !zahodit[i]);
+}
+
+let newTurns = 0, newChars = 0, touched = 0, cudzichSuborov = 0, preskocenychDavok = 0;
 
 const sessions = readdirSync(SOURCE).filter((f) => f.endsWith('.jsonl'));
 
@@ -210,7 +291,8 @@ for (const file of sessions) {
     continue;
   }
   const preskocit = moje;
-  let line = 0, added = '', vynechane = 0;
+  let line = 0, vynechane = 0;
+  const noveTahy = [];
   let day = state[key]?.day ?? '';
   /*
     Každé zlyhanie raz za reláciu.
@@ -251,11 +333,15 @@ for (const file of sessions) {
       const who = j.type === 'user' ? 'USER' : 'CLAUDE';
       const when = j.timestamp?.slice(0, 16).replace('T', ' ') ?? '?';
       const body = [text, calls && '```\n' + calls.trimEnd() + '\n```'].filter(Boolean).join('\n\n');
-      added += `\n\n## ${who} - ${when}\n\n${body}`;
-      newTurns++;
-      newChars += body.length;
+      noveTahy.push(`\n\n## ${who} - ${when}\n\n${body}`);
     }
   }
+
+  const pripisat = bezDavok(noveTahy, out);
+  const added = pripisat.join('');
+  newTurns += pripisat.length;
+  newChars += added.length;
+  preskocenychDavok += noveTahy.length - pripisat.length;
 
   if (firstTime) {
     const start = statSync(path).mtime.toISOString().slice(0, 10);
@@ -263,9 +349,11 @@ for (const file of sessions) {
   }
   if (added) { appendFileSync(out, added); touched++; }
   state[key] = { lines: line, day };
+  // Stav sa zapisuje hneď za ťahmi, nie až na konci behu — pozri zapisStav().
+  zapisStav();
 }
 
-writeFileSync(STATE, JSON.stringify(state, null, 2));
+zapisStav();
 
 // `--quiet` is for the SessionEnd hook: when nothing was added there is nothing
 // to print. A hook that says something every time you close a window starts
@@ -285,5 +373,7 @@ if (cudzichSuborov) {
 if (!quiet || touched > 0) {
   console.log(`Sessions: ${sessions.length}, appended to: ${touched}`);
   console.log(`New turns: ${newTurns} (${mb(newChars)} MB, ~${Math.round(newChars / 3.2 / 1000)}k tokens)`);
+  // Koľko sa zahodilo, patrí do výpisu: ticho by z toho spravilo tichú stratu.
+  if (preskocenychDavok) console.log(`Repeated turns skipped: ${preskocenychDavok}`);
   console.log(`Archive: ${TARGET}`);
 }
