@@ -101,18 +101,77 @@ if (existsSync(CESTY.index)) {
   pamäť oslepla presne na tom, čo sa práve rozhoduje.
 */
 const PRAH = Number(CESTY.volby.distilAfter ?? 10);
+let slepota = null;
 if (existsSync(CESTY.trail)) {
   const pokryte = new Set();
   for (const f of readdirSync(CESTY.trail).filter((x) => x.endsWith('.md'))) {
     const t = readFileSync(join(CESTY.trail, f), 'utf8');
     for (const m of t.matchAll(/\]\(([^)#]+)#L\d+/g)) pokryte.add(m[1].split('/').pop());
   }
-  const bez = prepisy.filter((f) => !pokryte.has(f)).length;
-  if (bez >= PRAH) zaostava.push(`${bez} transcripts have no trail entry — /memex:distill`);
+  const bez = prepisy.filter((f) => !pokryte.has(f));
+  if (bez.length >= PRAH) {
+    /*
+      Dokedy pamäť nevidí, nie koľko súborov chýba.
+
+      „26 prepisov bez záznamu" je počet, ktorý nič neznamená. „Pamäť nevidí
+      od 1. septembra" je stav, ktorý sa dá posúdiť — a je to presne to, čo je
+      v stávke: nie súbory, ale posledný týždeň rozhodnutí.
+    */
+    const dni = [];
+    for (const f of bez) {
+      const d = /^(?:date|den):\s*(\d{4}-\d{2}-\d{2})/m
+        .exec(readFileSync(join(CESTY.archive, f), 'utf8').slice(0, 300));
+      if (d) dni.push(d[1]);
+    }
+    dni.sort();
+    const odkedy = dni[0] ?? null;
+    const dnovDozadu = odkedy ? Math.round((Date.now() - Date.parse(odkedy)) / 86400000) : 0;
+    slepota = { pocet: bez.length, odkedy, dnovDozadu };
+  }
 }
 
-if (!zaostava.length) process.exit(0);
+if (!zaostava.length && !slepota) process.exit(0);
 if (TICHO && process.env.MEMEX_TICHO === '1') process.exit(0);
 
-console.log('memex: memory is behind');
-for (const x of zaostava) console.log(`  · ${x}`);
+if (zaostava.length) {
+  console.log('memex: memory is behind');
+  for (const x of zaostava) console.log(`  · ${x}`);
+}
+
+/*
+  Pripomienka, ktorá silnie — a hovorí to používateľovi, nie len agentovi.
+
+  Stdout zo `SessionStart` ide do kontextu agenta, nie pred oči človeku. Sám
+  o sebe je to teda lístok, o ktorom sa agent môže rozhodnúť pomlčať — a keď
+  rovnaký riadok vidí desiaty raz, pomlčí. Preto sú tu dve veci naraz:
+
+  · **Prikáže sa to povedať.** Nie „poznámka pre teba", ale veta pre
+    používateľa, v jeho jazyku, na začiatku odpovede. Agent nemá čo posudzovať,
+    či to je dosť dôležité.
+  · **Silnie to.** Rovnaká veta pri desiatich aj pri stopäťdesiatich prepisoch
+    je vzor, ktorý sa naučí prehliadať. Text sa mení s tým, ako dlho je pamäť
+    slepá — lebo v stávke nie sú súbory, ale dni rozhodnutí.
+
+  Destilácia je jediná vec v memexe, ktorú hook spraviť nemôže: stojí modelové
+  tokeny. Preto je toto jediné miesto, kde si nástroj pýta pozornosť.
+*/
+if (slepota) {
+  const { pocet, odkedy, dnovDozadu } = slepota;
+  const odkdy = odkedy ? ` — the archive covers it, the trail does not, so nothing since ${odkedy} can be pointed at` : '';
+  console.log('');
+  if (dnovDozadu >= 14) {
+    console.log(`⛔ MEMEX: the project's memory has been blind for ${dnovDozadu} days.`);
+    console.log(`${pocet} transcripts have no trail entry${odkdy}.`);
+    console.log('TELL THE USER THIS FIRST, in their own language, before answering anything');
+    console.log('else: the memory cannot answer questions about the last few weeks until');
+    console.log('the distiller is run (/memex:distill). It is a batch job and costs model');
+    console.log('tokens, so only they can start it. Do not bury this at the end of a reply.');
+  } else if (dnovDozadu >= 7 || pocet >= PRAH * 2) {
+    console.log(`⚠️ MEMEX: the trail is ${dnovDozadu} days behind — ${pocet} transcripts have no entry${odkdy}.`);
+    console.log('Say this to the user in their own language near the start of your first');
+    console.log('reply: questions about the last week have nothing to point at until');
+    console.log('/memex:distill is run. It costs model tokens, so it is their call.');
+  } else {
+    console.log(`memex: ${pocet} transcripts have no trail entry — mention /memex:distill to the user.`);
+  }
+}
