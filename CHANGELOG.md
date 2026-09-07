@@ -1,5 +1,34 @@
 # Zmeny
 
+## 0.21.0 — mapa ukazovala vedľa
+
+Mapa vypisuje za názvom súboru číslo riadku a `stripComments` ho posúvala:
+blokový komentár sa nahrádzal jednou medzerou aj s koncami riadkov, takže
+všetko za ním sa vypísalo vyššie, než v súbore naozaj stojí. Ukazovateľ
+ukazoval vedľa presne v tej veci, na ktorú je. Komentár sa teraz nahrádza
+medzerami a riadky zostávajú.
+
+Benchmark pravdivosti uznával zhodu podľa názvu súboru, takže ukazovateľ na
+`src/a/Zoznam.tsx` sa počítal ako pravdivý, keď slovo obsahoval
+`src/b/Zoznam.tsx`. Po sprísnení na presnú cestu padla pravdivosť cez kmeň
+z 23,6 % na 9,4 % — nie zhoršené hľadanie, len číslo bez kolízií mien.
+Kontrola stavu hlási aj rozsahy, ktoré začínajú pred prvým riadkom alebo
+končia skôr, než začínajú; predtým videla len ten druhý koniec.
+
+Zoradenie sa nepohlo, a tak to má byť: dotaz vetou MRR 0,569 proti 0,570 na
+tých istých 300 úlohách. Sú to opravy správnosti, nie zoradenia.
+
+README a ROADMAP hovoria, prečo sa index neprestavoval — SessionEnd hook
+prestavbu spustil a relácia sa zavrela skôr, než dvojminútová práca dobehla.
+Namerané na ostrom archíve so 69 prepismi: 128,5 s → 1,19 s. Spúšťač pre
+prírastkové indexovanie („viac než ~3 sekundy") je preto nesplnený a položka
+zostáva odložená.
+
+Podklady meraní z auditu sú v `.gitignore`. Vznikli na súkromnom projekte
+a nesú jeho štruktúru, správy commitov aj nadpisy tém; tento repozitár je
+verejný. Pribudlo zadanie spoločnej pamäte pre Claude Code a Codex — plán
+ďalšej práce, nie opis hotového.
+
 ## 0.20.0 — spoľahlivosť archívu a rýchlejšie indexovanie
 
 Index sa vytvára jednou transakciou a hotový súbor nahrádza starý bez jeho
