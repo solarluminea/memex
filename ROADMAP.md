@@ -31,7 +31,21 @@ roughly 150 transcripts. Time it with
 **Shape:** a table of `file → mtime`, and `DELETE FROM useky WHERE subor = ?`
 for the changed ones only. Around twenty lines.
 
-**Today:** 37 transcripts, well under a second.
+**Update, 2026-09-07 — the trigger fired, and then stopped firing.** Measured on
+a real archive of 69 transcripts (15.4 MB, 28 505 chunks): the rebuild took
+**128.5 seconds**, because `vloz.run()` ran in autocommit — 28 505 separate
+transactions, each with its own fsync. One `BEGIN`/`COMMIT` pair around the
+loop brought it to **1.19 seconds** with identical indexed rows, confirmed
+afterwards at 1.221 s running from the installed 0.20.0.
+
+The cost was not the point. The SessionEnd hook started the rebuild, the
+session closed, and two minutes of work never finished — so the index sat three
+transcripts behind while the archive and the map looked healthy and
+`/memex:status` said one word about it: `built`. It was reported as a
+persistent bug, and it was never the hook.
+
+So the trigger above is now **unmet** — 1.2 seconds against a threshold of
+three. This item stays deferred. Measure again before building it.
 
 ### Hot and cold memory
 

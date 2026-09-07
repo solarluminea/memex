@@ -84,9 +84,10 @@ one-line summary of every tool call — without it the archive records what was
 said but not what was done, and "fixed it" with no `[Tool: Edit foo.ts]` beside
 it is untraceable six months later.
 
-**Full-text** — SQLite FTS5 over the archive, chunked by paragraph with
-overlap so an exchange split across two turns still matches. Every chunk is
-indexed twice, with and without diacritics, so `ziadost` finds `žiadosť`.
+**Full-text** — SQLite FTS5 over the archive, chunked by paragraph without
+overlap. The tokenizer folds diacritics, so `ziadost` finds `žiadosť` without
+storing a second copy. Index rebuilding uses one transaction; duplicate results
+are removed only when their complete text matches.
 
 **Trail** — one file per topic, containing a heading and a line range. No
 content. The heading is written so you can decide whether to open it without
@@ -183,6 +184,18 @@ A SessionEnd hook runs the archiver, refreshes the full-text index and rebuilds
 the map, so none of them can be forgotten — without the index step the first
 search of a fresh install answers `No index` and costs a whole turn to fix. Always-on cost is about **310 tokens** per session; everything else
 is paid on use.
+
+A SessionStart hook checks what fell behind — file times and two counts from
+the finished index, 0.19 s — and stays quiet unless something actually is.
+Quiet also in a project with no archive, because the hook is installed per user
+and fires everywhere.
+
+It exists because work at session end can simply not finish. Measured on a real
+archive of 69 transcripts: rebuilding the index took 128.5 seconds and the
+session closed first, so the index sat three transcripts behind while
+everything else looked healthy. That rebuild is 1.19 seconds now — every insert
+used to be its own transaction — but a hook that runs while a window is closing
+is never a promise, so the next session checks.
 
 ## Configuration
 
