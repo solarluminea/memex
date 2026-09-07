@@ -130,6 +130,29 @@ if (existsSync(CESTY.trail)) {
   }
 }
 
+/*
+  `--treba-destilovat` — spínač pre plánovanú úlohu, nie pre človeka.
+
+  Vypíše jednu vetu a skončí s nulou, keď je ukazovateľ aspoň `distilDays` dní
+  pozadu; inak mlčí a skončí s jednotkou. Tým sa dá zreťaziť s čímkoľvek, čo
+  destiláciu spustí:
+
+      node dobehni.mjs --treba-destilovat && claude -p "/memex:distill" …
+
+  Prečo spínač a nie rovno spustenie: destilácia je jediná časť memexu, ktorá
+  stojí modelové tokeny, a nástroj, ktorý ich míňa sám od seba, si to musí dať
+  schváliť inde než vo vlastnom kóde. Toto povie „už je čas"; kto to spustí a
+  za koľko, rozhoduje ten, kto tú úlohu založil.
+*/
+if (process.argv.includes('--treba-destilovat')) {
+  const DNI = Number(CESTY.volby.distilDays ?? 3);
+  if (slepota && slepota.dnovDozadu >= DNI) {
+    console.log(`trail is ${slepota.dnovDozadu} days behind (${slepota.pocet} transcripts, oldest ${slepota.odkedy})`);
+    process.exit(0);
+  }
+  process.exit(1);
+}
+
 if (!zaostava.length && !slepota) process.exit(0);
 if (TICHO && process.env.MEMEX_TICHO === '1') process.exit(0);
 
