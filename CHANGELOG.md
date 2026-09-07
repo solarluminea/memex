@@ -44,7 +44,12 @@ benchmark pravdivosti už neuznáva rovnaký názov súboru na inej ceste.
 Overenie na pôvodnej snímke: mapa na 300 zadaniach bez zmeny (62,7 % do troch
 výsledkov), pamäť na 225 témach 84,0 → 84,4 % do ôsmich. Index 28 344 úsekov
 sa po aplikovaní vytvoril za 1,00 s na skúšobnom Windows stroji. Časy závisia
-od stroja. Podklady sú v `audit/2026-09-06/aplikovane-vysledky.json`.
+od stroja. Podklady k meraniu vznikli na súkromnom projekte, takže v tomto
+repozitári nie sú — nesú jeho štruktúru aj nadpisy tém.
+
+Prestavba indexu, zmeraná naostro na archíve so 69 prepismi: 128,5 s → 1,19 s,
+28 505 úsekov. Predtým sa index neprestavoval preto, že dvojminútová práca
+nestihla dobehnúť, kým sa relácia zatvárala.
 
 Automatické regresné skúšky: `node --test tests/*.test.mjs`.
 Pôvodná cielená sada po opravách spĺňa 13 z 15 požiadaviek; zostávajúce dve

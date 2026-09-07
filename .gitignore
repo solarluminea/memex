@@ -1,3 +1,7 @@
 node_modules/
 .memex/
 *.db
+
+# Podklady meraní z auditu. Vznikli na súkromnom projekte a nesú jeho
+# štruktúru, správy commitov aj nadpisy tém — do verejného repozitára nepatria.
+audit/
