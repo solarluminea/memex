@@ -35,12 +35,11 @@
  * Incremental: a second run appends only new turns, based on the line count in
  * `.state.json`, so it is safe to run daily.
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, appendFileSync, renameSync } from 'node:fs';
-import { createInterface } from 'node:readline';
-import { createReadStream } from 'node:fs';
-import { join, basename } from 'node:path';
+import { existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { kde } from './kde.mjs';
+import { archivuj } from './archivator.mjs';
 
 /**
  * The project key Claude Code stores transcripts under.
@@ -73,7 +72,7 @@ function findTranscripts(key) {
   return hit ? join(PROJECTS, hit) : null;
 }
 
-const PROJECT = process.env.MEMEX_PROJECT ?? projectKey(process.cwd());
+const PROJECT = process.env.MEMEX_PROJECT ?? projectKey(process.env.MEMEX_PROJECT_ROOT || process.cwd());
 const SOURCE = findTranscripts(PROJECT);
 if (!SOURCE) {
   console.error(`Could not find this project's transcripts: ${join(PROJECTS, PROJECT)}`);
@@ -83,7 +82,6 @@ if (!SOURCE) {
 }
 
 const TARGET = kde().archive;
-const STATE = join(TARGET, '.state.json');
 
 /** Content blocks that carry meaning. Everything else is tool exhaust. */
 const blocks = (c) => (Array.isArray(c) ? c : typeof c === 'string' ? [{ type: 'text', text: c }] : []);
@@ -154,226 +152,39 @@ if (!existsSync(TARGET)) {
   mkdirSync(TARGET, { recursive: true });
 }
 
-const state = existsSync(STATE) ? JSON.parse(readFileSync(STATE, 'utf8')) : {};
-
-/*
-  Stav sa zapisuje po každej relácii, nie raz na konci behu.
-
-  Ťahy sa pripisujú priebežne (`appendFileSync` v slučke), takže keď sa zápis
-  polohy nechá až za slučku, každé prerušenie behu nechá prepisy zapísané a
-  polohu nezapísanú — a ďalší beh pripíše presne ten istý úsek znova. Nič
-  nezlyhá nahlas, len archív pri každej ďalšej relácii povyrastie o dávku,
-  ktorá tam už je.
-
-  Namerané 1. 9. 2026 na projekte so 48 reláciami: `.state.json` stál na mieste
-  od 22:00 predošlého dňa, kým prepisy rástli ďalej, a v archíve bolo 25 152
-  opakovaných ťahov v súvislých dávkach — najdlhšia 2 427 ťahov, jeden prepis
-  narástol z 244 unikátnych ťahov na 1 942. Po oprave stojí prerušený beh
-  nanajvýš jednu reláciu.
-
-  Píše sa cez dočasný súbor a premenovanie: `writeFileSync` prerušený uprostred
-  nechá stav useknutý, a pokazený `JSON.parse` pri ďalšom behu znamená, že sa
-  začne od nuly a pripíše sa všetko znovu — teda presne tá istá porucha, len
-  horšia. `rename` je na jednom zväzku atomický.
-*/
-function zapisStav() {
-  const docasny = `${STATE}.tmp`;
-  writeFileSync(docasny, JSON.stringify(state, null, 2));
-  renameSync(docasny, STATE);
-}
-
-/*
-  Koľko ťahov už v archíve je — poistka pre prípad, že stav chýba.
-
-  Stav bol jediný zdroj pravdy a to je zle: keď sa stratí, prepíše sa cudzím
-  nástrojom alebo sa archív presunie, archivár začne od nuly a **pripíše všetko
-  znovu**. Nič nezlyhá, len súbor je odrazu dvojnásobný.
-
-  Namerané na skutočnom projekte: prepis narástol zo 172 383 na 345 646 riadkov
-  a 64,6 % viet v ňom bolo dvakrát. Príčina bola smiešna — projekt mal vlastný
-  archivár, ktorý si stav písal do `.stav.json`, plugin ho hľadal
-  v `.state.json`, a našiel prázdno.
-
-  Ťahy sú to, čo archivár zapisuje, takže sa dajú spočítať priamo v archíve.
-  Stav je odteraz zrýchlenie, nie pravda: keď chýba, poloha sa odvodí a nič sa
-  nezdvojí.
-*/
-function tahovVArchive(cesta) {
-  if (!existsSync(cesta)) return { moje: 0, cudzie: 0 };
-  const t = readFileSync(cesta, 'utf8');
-  const vsetky = (t.match(/^## .+$/gm) ?? []).length;
-  const moje = (t.match(/^## (?:USER|CLAUDE) - /gm) ?? []).length;
-  return { moje, cudzie: vsetky - moje };
-}
-/*
-  Dávky ťahov, ktoré v prepise už raz stoja, sa nepripisujú druhýkrát.
-
-  Nie je to poistka proti tomuto skriptu — je to vlastnosť zdroja. Keď sa
-  kontext relácie zhutní alebo sa relácia obnoví, Claude Code zapíše celý úsek
-  správ do JSONL znova, a archivátor ho poslušne prepíše do archívu ešte raz.
-  Namerané 1. 9. 2026 na troch prepisoch: 30,5 %, 43,6 % a 44,9 % ťahov
-  v zdrojovom JSONL malo presne zhodného predchodcu, a archív postavený jedným
-  čistým behom mal 10 235 opakovaných ťahov v súvislých dávkach.
-
-  Zahadzuje sa len **súvislá séria troch a viac** opakovaní. Dva rovnaké ťahy
-  vedľa seba vyrobí aj bežná práca — `[Tool: ToolSearch]` dvakrát v tej istej
-  minúte je jeden ťah dvakrát, nie chyba — a rozoznať sa to nedá, tak sa toho
-  radšej nedotýkame. Namerané na tom istom archíve: v sériách 1–2 leží 1 396
-  opakovaní, v sériách 3+ ich je 25 152.
-
-  Porovnáva sa proti tomu, čo v prepise **už je**, nie len v rámci pripisovanej
-  dávky: inkrementálny beh vidí zakaždým iný kus a bez toho by dávku rozdelenú
-  medzi dva behy neuvidel ani jeden z nich.
-*/
-const DAVKA = 3;
-/** Kľúč ťahu: konce riadkov ani koncové medzery nerozhodujú (archív má oboje). */
-const klucTahu = (t) => t.replace(/\r/g, '').replace(/[ \t]+$/gm, '').trim();
-
-function bezDavok(tahy, cestaKPrepisu) {
-  if (!tahy.length) return tahy;
-  const videne = new Set();
-  if (existsSync(cestaKPrepisu)) {
-    const t = readFileSync(cestaKPrepisu, 'utf8');
-    let akt = null;
-    for (const r of t.split('\n')) {
-      if (/^## (?:USER|CLAUDE) - \d{4}-\d{2}-\d{2} \d{2}:\d{2}\r?$/.test(r)) {
-        if (akt) videne.add(klucTahu(akt.join('\n')));
-        akt = [r];
-      } else if (akt) akt.push(r);
-    }
-    if (akt) videne.add(klucTahu(akt.join('\n')));
-  }
-  const duplikat = tahy.map((t) => {
-    const k = klucTahu(t);
-    const bol = videne.has(k);
-    videne.add(k);
-    return bol;
-  });
-  const zahodit = new Array(tahy.length).fill(false);
-  for (let i = 0; i < tahy.length; ) {
-    if (!duplikat[i]) { i++; continue; }
-    let j = i;
-    while (j < tahy.length && duplikat[j]) j++;
-    if (j - i >= DAVKA) for (let k = i; k < j; k++) zahodit[k] = true;
-    i = j;
-  }
-  return tahy.filter((_, i) => !zahodit[i]);
-}
-
-let newTurns = 0, newChars = 0, touched = 0, cudzichSuborov = 0, preskocenychDavok = 0;
-
-const sessions = readdirSync(SOURCE).filter((f) => f.endsWith('.jsonl'));
-
-for (const file of sessions) {
-  const path = join(SOURCE, file);
-  const key = basename(file, '.jsonl');
-  const from = state[key]?.lines ?? 0;
-
-  const out = join(TARGET, `${key}.md`);
-  const firstTime = !existsSync(out);
-  /*
-    Bez stavu sa nepripisuje naslepo.
-
-    Keď stav pre reláciu chýba, poloha sa odvodí z archívu — preskočí sa
-    toľko ťahov, koľko ich tam tento nástroj už zapísal.
-
-    A keď v súbore stoja ťahy, ktoré písal niekto iný, nerobí sa nič.
-    Namerané na projekte, ktorý mal vlastný archivár s vlastným formátom
-    (`## TY ·`, `## JA ·`) aj vlastným stavom: v jednom priečinku sa zišlo
-    55 016 cudzích ťahov a 3 716 vlastných, a jeden beh bez stavu prepis
-    zdvojil zo 172 383 na 345 646 riadkov. Nástroj, ktorý nevie povedať, kde
-    skončil, nemá pripisovať — mlčky prejsť je jediná bezpečná odpoveď.
-  */
-  const { moje, cudzie } = state[key] ? { moje: 0, cudzie: 0 } : tahovVArchive(out);
-  if (cudzie) {
-    cudzichSuborov++;
-    if (!quiet) console.error(`! ${key}.md: ${cudzie} turns written by something else — skipped.`);
-    continue;
-  }
-  const preskocit = moje;
-  let line = 0, vynechane = 0;
-  const noveTahy = [];
-  let day = state[key]?.day ?? '';
-  /*
-    Každé zlyhanie raz za reláciu.
-
-    Bez toho sa jedna chyba prekladu zapíše toľkokrát, koľkokrát niekto spustí
-    preklad — namerané 721 riadkov, z ktorých drvivá väčšina boli tie isté
-    hlásenia z vygenerovaných typov. Informácia je, že sa to stalo; koľkokrát
-    sa to zopakovalo, je vidieť aj tak, lebo volania nástrojov v archíve
-    zostávajú.
-  */
-  const videneZlyhania = new Set();
-
-  const reader = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
-  for await (const r of reader) {
-    line++;
-    if (line <= from) continue;
-    let j;
-    try { j = JSON.parse(r); } catch { continue; }
-    if (j.type !== 'user' && j.type !== 'assistant') continue;
-    const m = j.message;
-    if (!m) continue;
-    if (j.timestamp) day = j.timestamp.slice(0, 10);
-
-    let text = '', calls = '';
-    for (const b of blocks(m.content)) {
-      if (b.type === 'text') text += cleanText(b.text);
-      else if (b.type === 'tool_use') calls += toolSummary(b) + '\n';
+await archivuj({
+  zdroj: SOURCE, cieľ: TARGET, projekt: PROJECT, ticho: quiet,
+  preved(j, zlyhania) {
+    if (j.type !== 'user' && j.type !== 'assistant') return null;
+    if (!j.message) return null;
+    const texty = [], volania = [];
+    for (const b of blocks(j.message.content)) {
+      if (b.type === 'text') texty.push(cleanText(b.text));
+      else if (b.type === 'tool_use') volania.push(toolSummary(b));
       else if (b.type === 'tool_result') {
-        const zlyhanie = failureLine(b.content);
-        if (zlyhanie && !videneZlyhania.has(zlyhanie)) {
-          videneZlyhania.add(zlyhanie);
-          calls += `[Failed] ${zlyhanie}\n`;
-        }
+        const chyba = failureLine(b.content);
+        if (chyba && !zlyhania.has(chyba)) { zlyhania.add(chyba); volania.push('[Failed] ' + chyba); }
       }
     }
-    if (text || calls) {
-      if (vynechane < preskocit) { vynechane++; continue; }
-      const who = j.type === 'user' ? 'USER' : 'CLAUDE';
-      const when = j.timestamp?.slice(0, 16).replace('T', ' ') ?? '?';
-      const body = [text, calls && '```\n' + calls.trimEnd() + '\n```'].filter(Boolean).join('\n\n');
-      noveTahy.push(`\n\n## ${who} - ${when}\n\n${body}`);
-    }
-  }
+    const text = texty.filter(Boolean).join('');
+    const plot = String.fromCharCode(96).repeat(3);
+    /*
+      `trimEnd()` na konci bloku volaní, nie ozdoba.
 
-  const pripisat = bezDavok(noveTahy, out);
-  const added = pripisat.join('');
-  newTurns += pripisat.length;
-  newChars += added.length;
-  preskocenychDavok += noveTahy.length - pripisat.length;
+      Príkaz Basha sa do zhrnutia orezáva na 200 znakov a rez môže padnúť na
+      koniec riadku. Bez orezania zostane pred zatváracím plotom prázdny
+      riadok — a keďže je *vnútri* bloku, neodstráni ho ani normalizácia,
+      ktorá čistí len konce riadkov a okraje ťahu.
 
-  if (firstTime) {
-    const start = statSync(path).mtime.toISOString().slice(0, 10);
-    writeFileSync(out, `---\nsession: ${key}\nproject: ${PROJECT}\ndate: ${day || start}\n---\n\n# Session ${day || start}\n`);
-  }
-  if (added) { appendFileSync(out, added); touched++; }
-  state[key] = { lines: line, day };
-  // Stav sa zapisuje hneď za ťahmi, nie až na konci behu — pozri zapisStav().
-  zapisStav();
-}
+      Kým sa ťahy pripisovali naslepo, bol to kozmetický kaz. Odkedy sa stratený
+      stav obnovuje porovnaním obsahu, je z neho porucha: prepis prestane sedieť
+      so zdrojom. Namerané na tomto archíve — 1117 ťahov, z toho jediný s takto
+      useknutým príkazom, a zhoda v poradí padla na 378. S orezaním 1117/1117.
 
-zapisStav();
-
-// `--quiet` is for the SessionEnd hook: when nothing was added there is nothing
-// to print. A hook that says something every time you close a window starts
-// being ignored — and with it the message that actually matters.
-const mb = (x) => (x / 1048576).toFixed(2);
-/*
-  Preskočené súbory sa hlásia aj ticho.
-
-  Toto je jediná vec, ktorú `--quiet` prebiť nesmie: archív, do ktorého sa
-  nepripisuje, vyzerá presne ako archív, kde nie je nič nové. Rozdiel je, že
-  ten prvý ticho zabúda každú ďalšiu reláciu.
-*/
-if (cudzichSuborov) {
-  console.error(`! ${cudzichSuborov} transcripts were written by another tool and are NOT being updated.`);
-  console.error(`  Pick one archiver: either stop the other one, or point memex.json elsewhere.`);
-}
-if (!quiet || touched > 0) {
-  console.log(`Sessions: ${sessions.length}, appended to: ${touched}`);
-  console.log(`New turns: ${newTurns} (${mb(newChars)} MB, ~${Math.round(newChars / 3.2 / 1000)}k tokens)`);
-  // Koľko sa zahodilo, patrí do výpisu: ticho by z toho spravilo tichú stratu.
-  if (preskocenychDavok) console.log(`Repeated turns skipped: ${preskocenychDavok}`);
-  console.log(`Archive: ${TARGET}`);
-}
+      Verzia 0.19.0 orezávala (`calls.trimEnd()`); refaktor to stratil.
+    */
+    const telo = [text, volania.length ? plot + '\n' + volania.join('\n').trimEnd() + '\n' + plot : ''].filter(Boolean).join('\n\n');
+    if (!telo) return null;
+    return '\n\n## ' + (j.type === 'user' ? 'USER' : 'CLAUDE') + ' - ' + (j.timestamp?.slice(0, 16).replace('T', ' ') ?? '?') + '\n\n' + telo;
+  },
+});
