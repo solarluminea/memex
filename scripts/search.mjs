@@ -32,7 +32,7 @@
  *   memex/scripts/search.mjs --osnova [prepis]     nadpisy s číslami riadkov
  */
 import { readFileSync, readdirSync, existsSync, mkdirSync, rmSync, renameSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { kde } from './kde.mjs';
 // node:sqlite landed in Node 22.5 and stabilised in 24. Without this guard the
@@ -110,6 +110,19 @@ function useky(text, maxZnakov = CESTY.volby.chunk ?? 400) {
   return out;
 }
 
+/*
+  Značka udalosti patrí archivátoru, nie čitateľovi.
+
+  Archivátor si od 0.20.0 píše do hlavičky ťahu `<!-- memex:… -->`, aby po
+  strate stavu vedel, čo už zapísal. V indexe nemá čo robiť: dvadsaťštyri
+  znakov náhodného hexu na každý ťah sa vracia v ukážkach a míňa presne to,
+  čo má tento nástroj šetriť.
+
+  Odstraňuje sa len značka, nie riadok — čísla riadkov v ukazovateli musia
+  ďalej sedieť na súbor na disku.
+*/
+const ZNACKA = / <!-- memex:[a-f0-9]{24,64} -->/g;
+
 function postavIndex(priecinok = ARCHIVE) {
   const cesta = priecinok === ARCHIVE ? INDEX : join(priecinok, '.search.db');
   /*
@@ -140,23 +153,29 @@ function postavIndex(priecinok = ARCHIVE) {
     Premenovanie je v rámci jedného priečinka atomické, takže buď je tam starý
     index, alebo celý nový — nikdy polovica.
   */
-  const docasny = `${cesta}.stavia`;
+  mkdirSync(dirname(cesta), { recursive: true });
+  const docasny = `${cesta}.${process.pid}.stavia`;
   // Aj žurnál: po zabitom behu zostane `-journal` vedľa a bez neho by SQLite
   // otvorilo rozostavaný súbor ako rozrobenú transakciu.
   for (const x of [docasny, `${docasny}-journal`]) if (existsSync(x)) rmSync(x, { force: true });
   const db = new DatabaseSync(docasny);
-  db.exec(SCHEMA);
-
-  const vloz = db.prepare('INSERT INTO useky (subor, od, doo, text) VALUES (?, ?, ?, ?)');
   let spolu = 0, suborov = 0;
-  for (const f of readdirSync(priecinok)) {
-    if (!f.endsWith('.md') || f.startsWith('.')) continue;
-    const t = readFileSync(join(priecinok, f), 'utf8');
-    for (const u of useky(t)) { vloz.run(f, u.od, u.do, u.text); spolu++; }
-    suborov++;
+  try {
+    db.exec(SCHEMA);
+    // Jedna transakcia odstráni potvrdenie každého jednotlivého úseku.
+    db.exec('BEGIN');
+    const vloz = db.prepare('INSERT INTO useky (subor, od, doo, text) VALUES (?, ?, ?, ?)');
+    for (const f of readdirSync(priecinok)) {
+      if (!f.endsWith('.md') || f.startsWith('.')) continue;
+      const t = readFileSync(join(priecinok, f), 'utf8').replace(ZNACKA, '');
+      for (const u of useky(t)) { vloz.run(f, u.od, u.do, u.text); spolu++; }
+      suborov++;
+    }
+    db.exec('COMMIT');
+  } finally {
+    db.close();
   }
-  db.close();
-  if (existsSync(cesta)) rmSync(cesta, { force: true });
+  // Starý index zostáva dostupný až do nahradenia hotovým súborom.
   renameSync(docasny, cesta);
   if (!TICHO) console.log(`Index: ${spolu} chunks from ${suborov} transcripts -> ${cesta}`);
 }
@@ -375,26 +394,20 @@ function hladaj(vyraz, n = 8) {
       vzácne — osem ukazovateľov, z ktorých dva sú ten istý, je odpoveď na
       šesť.
 
-      Vynecháva sa aj susedné okno v tom istom prepise: dva úseky, medzi
-      ktorými nie je medzera, sú jedna pasáž ukázaná dvakrát.
-
-      MRR 0,584 → 0,603, R@8 75,2 → 78,7 %, pri rovnakom počte prečítaných
-      riadkov. Drží na oboch poloviciach sady (+0,020 a +0,017).
+      Porovnáva sa celý text. Rovnaký úvod alebo susedné okno nezaručujú
+      rovnaký fakt: môžu obsahovať iné číslo či neskoršie rozhodnutie.
     */
     const surove = db.prepare(
       `SELECT subor, od, doo, text, snippet(useky, 3, '»', '«', ' … ', 24) AS ukazka, bm25(useky) AS skore
        FROM useky WHERE useky MATCH ? ORDER BY skore LIMIT ?`,
     ).all(dopyt, n * 4);
-    const kluc = (t) => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '')
-      .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 300);
+    // Odlišné čísla, veľkosť písmen aj diakritika môžu meniť význam.
+    const kluc = (t) => String(t).replace(/\r\n/g, '\n').trim();
     const videne = new Set();
-    const okna = [];
     r = surove.filter((x) => {
       const k = kluc(x.text);
       if (videne.has(k)) return false;
-      if (okna.some((o) => o.subor === x.subor && x.od <= o.doo + 2 && x.doo >= o.od - 2)) return false;
       videne.add(k);
-      okna.push(x);
       return true;
     }).slice(0, n);
   } catch (e) {
@@ -444,12 +457,13 @@ function osnova(nazovSuboru) {
 
 const arg = process.argv.slice(2);
 if (arg[0] === '--index') {
+  if (TICHO && !existsSync(ARCHIVE)) process.exit(0);
   mkdirSync(ARCHIVE, { recursive: true });
   // Prvý argument, ktorý nie je prepínač. `arg[1]` samo o sebe nestačí: pri
   // `--index --quiet` z hooku by sa za priečinok vzalo `--quiet` a index by
   // sa staval do cesty, ktorá neexistuje — a v tichom režime by to nikto
   // nevidel.
-  postavIndex(arg.slice(1).find((a) => !a.startsWith('--')) || ARCHIVE);
+  postavIndex(arg[1] && !arg[1].startsWith('--') ? arg[1] : ARCHIVE);
 }
 else if (arg[0] === '--file') {
   const c = arg.slice(1).find((a) => !a.startsWith('--'));
