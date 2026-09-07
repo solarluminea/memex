@@ -195,7 +195,7 @@ const NON_ASCII = /[^\x00-\x7F]/;
 
 /** Komentáre preč — inak sa z nich vyberajú útržky viet v úvodzovkách. */
 const stripComments = (s) =>
-  s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+  s.replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' ')).replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 
 /**
  * Labels a person reads on screen, in the order they appear in the file.
@@ -722,7 +722,7 @@ function lookup(word, { all: showAll = false } = {}) {
   if (!all.length && word.length >= 6 && !ABLATE.has('stem')) {
     const kmen = word.slice(0, Math.max(4, word.length - 3));
     all = map.modules
-      .map((m) => ({ ...m, score: undiacritic(`${m.path} ${m.description ?? ''}`).includes(kmen) ? 1 : 0 }))
+      .map((m) => ({ ...m, score: (undiacritic(`${m.path} ${m.description ?? ''}`).includes(kmen) || m.skryte.some(w => w.includes(kmen))) ? 1 : 0 }))
       .filter((m) => m.score > 0);
     if (all.length) console.log(`No exact match for "${word}" — showing "${kmen}…" instead.\n`);
   }

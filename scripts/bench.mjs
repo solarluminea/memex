@@ -179,7 +179,7 @@ function pravda(sada) {
     if (v.zasiahnutych) (v.kmen ? velkostKmen : velkostPresna).push(v.zasiahnutych);
     if (v.kmen) kmenDotazov++;
     for (const c of v.cesty) {
-      const ok = [...suboryStermom].some((f) => f === c || f.endsWith('/' + c.split('/').pop()));
+      const ok = suboryStermom.has(c);
       vratenych++; if (ok) pravdivych++;
       if (v.kmen) { kmenVratenych++; if (ok) kmenPravdivych++; }
     }

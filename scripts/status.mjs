@@ -184,14 +184,14 @@ for (const x of z) {
   for (const p of x.pointers) {
     const c = join(TRAIL, p.path);
     if (!existsSync(c)) { broken++; chybne.set(x.file, (chybne.get(x.file) ?? 0) + 1); continue; }
-    if (p.to > readFileSync(c, 'utf8').split('\n').length) {
+    if (p.from < 1 || p.to < p.from || p.to > readFileSync(c, 'utf8').split('\n').length) {
       past++;
       chybne.set(x.file, (chybne.get(x.file) ?? 0) + 1);
     }
   }
 }
 if (broken) console.log(`! ${broken} pointers reference a transcript that does not exist`);
-if (past) console.log(`! ${past} pointers reference lines past the end of the transcript`);
+if (past) console.log(`! ${past} pointers have invalid line ranges`);
 /*
   Ktoré záznamy, nie koľko ukazovateľov.
 
