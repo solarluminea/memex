@@ -34,7 +34,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { join, basename } from 'node:path';
-import { homedir } from 'node:os';
 import { kde } from './kde.mjs';
 
 const ROOT = process.env.MEMEX_PROJECT_ROOT || process.cwd();
@@ -43,10 +42,19 @@ const MEMEX = CESTY.root;
 const STATS = CESTY.stats;
 const STATE = join(MEMEX, '.stats-state.json');
 
-/** Kľúč, pod ktorým Claude Code drží prepisy tohto projektu. */
-const projectKey = (p) => p.replace(/\\/g, '/').replace(/[:/]/g, '-');
+// Kde ležia prepisy, hovorí `kde.mjs` — bola to štvrtá kópia toho istého kľúča.
 const SOURCE =
-  process.env.MEMEX_TRANSCRIPTS || join(homedir(), '.claude', 'projects', projectKey(ROOT));
+  process.env.MEMEX_TRANSCRIPTS || CESTY.zdroj.cesta || join(CESTY.zdroj.zaklad, CESTY.zdroj.kluc);
+
+/*
+  Verzia riadku telemetrie.
+
+  Riadok staršej verzie sa zahodí a relácia sa prepočíta. Bez toho by oprava
+  dvojitého účtovania tokenov (nižšie) platila len na nové relácie a prehľad by
+  porovnával polovicu meranú jedným pravidlom s polovicou meranou druhým — čo
+  je horší nezmysel než pôvodná chyba, lebo vyzerá ako zmena v práci.
+*/
+const VERZIA = 2;
 
 // ── čo sa počíta ───────────────────────────────────────────────────────────
 
@@ -57,8 +65,17 @@ const SOURCE =
   projekt, ktorý pracuje cez shell, vyzeral, že nehľadá vôbec — a jeho čísla
   by boli o niekom inom.
 */
-const HLADANIE = /^(grep|rg|ag|find|fd|glob)\b|\b(grep|rg)\b|map\.mjs|search\.mjs/;
-const CITANIE = /^(cat|head|tail|less|more)\b|\bsed -n\b/;
+/*
+  Vzory pokrývajú aj PowerShell.
+
+  Nástroj `PowerShell` sa sem posielal od začiatku, ale triedil sa unixovými
+  vzormi, takže `Get-Content` ani `Select-String` sa nepočítali. Na Windowse,
+  kde je PowerShell hlavný shell, to znamenalo telemetriu, ktorá tvrdí, že sa
+  nehľadá a nečíta — presne ten omyl, pred ktorým varuje komentár vyššie, len
+  obrátený na druhú platformu.
+*/
+const HLADANIE = /^(grep|rg|ag|find|fd|glob)\b|\b(grep|rg)\b|map\.mjs|search\.mjs|\b(Select-String|Get-ChildItem|gci)\b/;
+const CITANIE = /^(cat|head|tail|less|more|type)\b|\bsed -n\b|\b(Get-Content|gc)\b/;
 /*
   Zásah cez shell je zápis do súboru, nič iné.
 
@@ -66,7 +83,7 @@ const CITANIE = /^(cat|head|tail|less|more)\b|\bsed -n\b/;
   vyšlo z toho 142 „zásahov" na reláciu, čo je nezmysel. Commit nie je zmena
   kódu, je to zápis do histórie, a `> /dev/null` nie je zápis vôbec.
 */
-const ZASAH = /<<\s*'?[A-Z]|>\s*[\w./-]+\.\w+|\btee\s+[\w./-]+/;
+const ZASAH = /<<\s*'?[A-Z]|>\s*[\w./-]+\.\w+|\btee\s+[\w./-]+|\b(Set-Content|Add-Content|Out-File|Tee-Object)\b/;
 
 const NASTROJE = {
   lookup: new Set(['Grep', 'Glob', 'WebSearch']),
@@ -91,6 +108,7 @@ function zaradBash(prikaz) {
  */
 async function precitaj(cesta) {
   const r = {
+    v: VERZIA,
     session: basename(cesta, '.jsonl'),
     day: null,
     turns: 0,
@@ -100,6 +118,22 @@ async function precitaj(cesta) {
     beforeFirstEdit: null,
   };
   let krokov = 0;
+  /*
+    Jedna odpoveď sa účtuje raz.
+
+    Claude Code zapisuje jednu odpoveď modelu ako viac riadkov — text zvlášť,
+    každé volanie nástroja zvlášť — a `usage` v nich nesie **rovnaké** čísla,
+    lebo patria tomu istému volaniu API. Sčítať ich po riadkoch znamená
+    zaplatiť ten istý vstup toľkokrát, na koľko kusov sa odpoveď rozpadla.
+
+    Namerané na štyroch prepisoch tohto projektu: 2 090 riadkov s `usage`, ale
+    len 1 031 unikátnych `message.id`, a vstupné tokeny vyšli **1,98×** vyššie.
+    Číslo „36k čerstvých tokenov na zásah" bolo teda zhruba dvojnásobok.
+
+    Porovnanie polovíc tým skreslené nebolo — chyba je násobok, nie posun — ale
+    absolútne číslo áno, a práve to sa cituje.
+  */
+  const zapocitane = new Set();
 
   const rl = createInterface({ input: createReadStream(cesta), crlfDelay: Infinity });
   for await (const riadok of rl) {
@@ -109,7 +143,10 @@ async function precitaj(cesta) {
     if (!r.day && j.timestamp) r.day = j.timestamp.slice(0, 10);
 
     const u = j.message?.usage;
-    if (u) {
+    // Bez `id` sa započíta — je to jediný záznam o tom volaní, aký existuje.
+    const id = j.message?.id;
+    if (u && !(id && zapocitane.has(id))) {
+      if (id) zapocitane.add(id);
       r.turns++;
       r.input += u.input_tokens ?? 0;
       r.cacheWrite += u.cache_creation_input_tokens ?? 0;
@@ -146,13 +183,26 @@ async function zozbieraj(ticho) {
     if (!ticho) console.error(`No transcripts at ${SOURCE}`);
     return null;
   }
+  /*
+    Hook si nezaloží `.memex/` v projekte, ktorý oň nepožiadal.
+
+    `archive.mjs` túto poistku má a je pri nej napísané prečo; telemetria a
+    mapa ju nemali, takže hook, ktorý beží v každom otvorenom priečinku, si
+    zakladal pamäť všade. Nájdené na tomto stroji: `~/.memex/MAP.md` s nula
+    modulmi a `stats.jsonl` v domovskom priečinku, to isté v `Temp`.
+
+    Ručný beh zakladá ďalej — kto skript spustil sám, o pamäť požiadal.
+  */
+  if (ticho && !existsSync(MEMEX) && !CESTY.nastavenieExistuje) return null;
   mkdirSync(MEMEX, { recursive: true });
   const stav = existsSync(STATE) ? JSON.parse(readFileSync(STATE, 'utf8')) : {};
   const hotove = new Map(
     (existsSync(STATS) ? readFileSync(STATS, 'utf8') : '')
       .split('\n').filter(Boolean)
       .map((r) => { try { const j = JSON.parse(r); return [j.session, j]; } catch { return null; } })
-      .filter(Boolean),
+      .filter(Boolean)
+      // Riadok staršej verzie sa neprevezme, takže sa relácia prepočíta.
+      .filter(([, j]) => j.v === VERZIA),
   );
 
   let novych = 0;

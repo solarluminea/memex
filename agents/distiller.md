@@ -26,6 +26,16 @@ searching.
 
 ## Procedure
 
+0. **Work out where the scripts are, first.** The command that launched you
+   passes an absolute path to them. Use that. If `${CLAUDE_PLUGIN_ROOT}` below
+   still reads as those literal characters rather than a real directory, the
+   placeholder was not substituted — it is guaranteed in commands and hooks,
+   not in this file — so replace it everywhere with the path you were given, or
+   find it with `ls ~/.claude/plugins/*/memex/scripts`.
+
+   Never run the steps below with an unresolved path. They would fail one by
+   one and the fallback is reading whole transcripts, which costs 156× more
+   than the outline and looks like ordinary work while it happens.
 1. `/memex:archive` or `node ${CLAUDE_PLUGIN_ROOT}/scripts/archive.mjs` — pull
    in transcripts if the archive is behind.
 2. Work out which transcripts have no trail entries yet. Entries live in
@@ -122,4 +132,13 @@ true is often the crucial part when chasing a bug.
 
 ## At the end
 
-Say how many entries you created from which transcript. Nothing more.
+Your last message is relayed to the user as it is, so it is **one line**:
+
+`Distilled: 34 entries from 6 transcripts, 0 still uncovered.`
+
+The last number comes from the `status.mjs` run in step 7, not from your own
+count. If that run reports a problem — a pointer past the end of a transcript,
+a link into nothing — add it after the line in one short sentence. No list of
+entries, no headings, no per-transcript breakdown: you ran in the background so
+that none of this lands in the main session's context, and a long report puts
+it right back.

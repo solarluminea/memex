@@ -2,10 +2,12 @@
   "hooks": {
     "SessionStart": [
       {
+        "matcher": "startup|resume|clear",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/dobehni.mjs\" --quiet"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/dobehni.mjs\" --quiet",
+            "timeout": 30
           }
         ]
       }
@@ -15,19 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/archive.mjs\" --quiet"
-          },
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/search.mjs\" --index --quiet"
-          },
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/map.mjs\" --quiet"
-          },
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/stats.mjs\" --quiet"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/udrzba.mjs\" --quiet",
+            "timeout": 300
           }
         ]
       }

@@ -43,6 +43,19 @@ const SLOV = Number(process.env.BENCH_W ?? 5);
   či zmena drží, alebo sa len trafila do vzorky.
 */
 const SKIP = Number(process.env.BENCH_SKIP ?? 0);
+/*
+  Druhé, nezávislé delenie sady: párne proti nepárnym úlohám.
+
+  `BENCH_SKIP` delí sadu chronologicky, čo je správne, keď sa overuje, že
+  zlepšenie nie je vlastnosťou jedného obdobia projektu. Nestačí to však na
+  otázku „nie je to trafené do vzorky": obe polovice sa líšia aj tým, čo sa
+  vtedy programovalo, takže rozdiel medzi nimi má dva možné dôvody naraz.
+
+  `BENCH_MOD=0` a `BENCH_MOD=1` rozdelia tie isté úlohy striedavo. Obdobie je
+  v oboch polovicach rovnaké, takže rozdiel môže byť už len vzorka. Zmena,
+  ktorá drží na chronologickom aj na striedavom delení, je nález.
+*/
+const MOD = process.env.BENCH_MOD === undefined ? null : Number(process.env.BENCH_MOD);
 
 const STOP = new Set(['ktora', 'ktore', 'ktory', 'nielen', 'namiesto', 'pretoze', 'preto',
   'tlacidlo', 'pridane', 'pridany', 'opravene', 'oprava', 'zmena', 'zmenene', 'presun',
@@ -55,7 +68,7 @@ function ulohy(dotazyZo) {
   const raw = execFileSync('git', ['log', '--no-merges', '-n', '3000', '--format=%x00%s', '--name-only'],
     { cwd: APP, encoding: 'utf8', maxBuffer: 1 << 28 });
   const out = [];
-  let preskocene = 0;
+  let preskocene = 0, videnych = 0;
   for (const blok of raw.split('\0').slice(1)) {
     const [sprava, ...riadky] = blok.split('\n');
     const subory = riadky.map((r) => r.trim())
@@ -64,6 +77,7 @@ function ulohy(dotazyZo) {
     const slova = dotazyZo(sprava);
     if (!slova.length) continue;
     if (preskocene < SKIP) { preskocene++; continue; }
+    if (MOD !== null && (videnych++ % 2) !== MOD) continue;
     out.push({ sprava: sprava.trim(), subory, slova });
     if (out.length >= N) break;
   }

@@ -31,8 +31,8 @@
  *   memex/scripts/search.mjs "výraz" [--n 8]       hľadá
  *   memex/scripts/search.mjs --osnova [prepis]     nadpisy s číslami riadkov
  */
-import { readFileSync, readdirSync, existsSync, mkdirSync, rmSync, renameSync } from 'node:fs';
-import { join, basename, dirname } from 'node:path';
+import { readFileSync, readdirSync, existsSync, mkdirSync, rmSync, renameSync, statSync } from 'node:fs';
+import { join, basename, dirname, relative, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { kde } from './kde.mjs';
 // node:sqlite landed in Node 22.5 and stabilised in 24. Without this guard the
@@ -123,6 +123,105 @@ function useky(text, maxZnakov = CESTY.volby.chunk ?? 400) {
 */
 const ZNACKA = / <!-- memex:[a-f0-9]{24,64} -->/g;
 
+/*
+  Témy — prvá, lacná úroveň hľadania.
+
+  Prečo vôbec. Odpoveď na otázku do pamäte začínala prečítaním celého
+  rozcestníka: **11 891 tokenov** pri 260 témach, a rastie o riadok s každou
+  ďalšou. Jedno hľadanie v úsekoch stojí okolo 600. Štúdia so slepými sudcami
+  dala stope 100 % a fulltextu 98 % — jedna otázka v jednom behu z troch — a
+  tie dve percentá sa dnes platia dvadsaťnásobkom.
+
+  Merané, či by stačilo hľadať v nadpisoch: otázka poskladaná z ôsmich
+  najvzácnejších slov cieľovej pasáže nájde správny záznam v prvých desiatich
+  nadpisoch v **57,7 %** prípadov. Keď sa z otázky vyhodia slová, ktoré v
+  nadpise stoja — teda čistá parafráza — je to **0 %**.
+
+  Z toho plynie tvar: nadpisy sú prvá úroveň, nie náhrada. Vypisujú sa **spolu**
+  s úsekmi, takže nesprávny zásah v nadpisoch nie je jediné, čo agent dostane,
+  a celý rozcestník sa číta až vtedy, keď ani jedno nesedí.
+
+  Dva druhy záznamov v jednej tabuľke:
+
+  · `trail` — kurátorské, z priečinka stopy. Napísal ich model s otvoreným
+    prepisom a človek ich má prečítať; sú prvé v poradí.
+  · `auto` — odvodené z archívu, zadarmo. Nadpis, ktorý si Claude napísal v
+    odpovedi, a otázka používateľa. Merané proti hotovej stope: nadpis pokrýva
+    53,2 % jej ukazovateľov, otázka 30,5 %, aspoň jedno **69,3 %**.
+
+  ⚠️ `auto` nie je stopa a nikdy sa nezapisuje do `TRAIL.md`. Je ich rádovo
+  tisíce (2 296 otázok v 84 prepisoch, 27 na prepis), takže sa nedajú čítať
+  celé — dajú sa len prehľadať. Nadpis od modelu je malé prerozprávanie a to
+  je v tomto projekte cena, ktorá sa priznáva, nie zamlčuje.
+*/
+const HLAVICKA = /^## (USER|CLAUDE|CODEX) - /;
+
+function temyZoStopy() {
+  if (!existsSync(CESTY.trail)) return [];
+  const out = [];
+  for (const f of readdirSync(CESTY.trail).filter((x) => x.endsWith('.md'))) {
+    let t;
+    try { t = readFileSync(join(CESTY.trail, f), 'utf8'); } catch { continue; }
+    const h = /^# (20\d\d-\d\d-\d\d)\s*·\s*(.+)$/m.exec(t);
+    if (!h) continue;
+    for (const m of t.matchAll(/\]\(([^)#]+)#L(\d+)(?:-L(\d+))?\)/g)) {
+      out.push({
+        druh: 'trail', den: h[1], nadpis: h[2].trim(),
+        subor: m[1].split('/').pop(), od: +m[2], doo: +(m[3] ?? m[2]),
+      });
+    }
+  }
+  return out;
+}
+
+/*
+  Auto-témy z jedného prepisu.
+
+  Otázka používateľa siaha po ďalšiu otázku (to je „otázka aj odpoveď na ňu"),
+  najviac 120 riadkov — dlhší rozsah prestáva byť ukazovateľ. Nadpis Clauda
+  siaha po ďalší nadpis, najviac 60.
+
+  Krátke a dlhé sa vynechávajú z rovnakého dôvodu ako v osnove: pod desať
+  znakov to nie je téma, nad stodvadsať to je veta z odpovede.
+*/
+function autoTemy(nazov, text) {
+  const riadky = text.split('\n');
+  const den = /^(?:date|den):\s*(\d{4}-\d{2}-\d{2})/m.exec(text.slice(0, 300))?.[1] ?? '';
+  const otazky = [], nadpisy = [];
+  riadky.forEach((r, i) => {
+    if (/^## USER - /.test(r)) otazky.push(i);
+    else if (/^#{2,4} /.test(r) && !HLAVICKA.test(r)) nadpisy.push(i);
+  });
+  const out = [];
+  otazky.forEach((i, k) => {
+    // Prvá neprázdna veta pod hlavičkou ťahu je to, na čo sa človek pýtal.
+    let veta = '';
+    for (let j = i + 1; j < Math.min(i + 12, riadky.length); j++) {
+      const l = riadky[j].trim();
+      if (!l || l.startsWith('```') || l.startsWith('[Tool:')) continue;
+      veta = l.replace(/^[-*#>\s]+/, '').slice(0, 120);
+      break;
+    }
+    if (veta.length < 10) return;
+    const koniec = Math.min(otazky[k + 1] ?? riadky.length, i + 120);
+    out.push({ druh: 'auto', den, nadpis: veta, subor: nazov, od: i + 1, doo: koniec });
+  });
+  nadpisy.forEach((i, k) => {
+    const t = riadky[i].replace(/^#+\s*/, '').replace(/[*`]/g, '').trim();
+    if (t.length < 10 || t.length > 120) return;
+    /*
+      Aspoň pätnásť riadkov, aj keď ďalší nadpis prichádza hneď.
+
+      Zoznam nadpisov pod sebou dával rozsahy po päť riadkov — ukazovateľ,
+      ktorý neukazuje na nič. Rozsahy sa tu smú prekrývať: nie sú to úseky
+      indexu, ktoré si konkurujú v bm25, sú to miesta na otvorenie.
+    */
+    const koniec = Math.min(Math.max(nadpisy[k + 1] ?? riadky.length, i + 15), riadky.length, i + 60);
+    out.push({ druh: 'auto', den, nadpis: t, subor: nazov, od: i + 1, doo: koniec });
+  });
+  return out;
+}
+
 function postavIndex(priecinok = ARCHIVE) {
   const cesta = priecinok === ARCHIVE ? INDEX : join(priecinok, '.search.db');
   /*
@@ -158,18 +257,53 @@ function postavIndex(priecinok = ARCHIVE) {
   // Aj žurnál: po zabitom behu zostane `-journal` vedľa a bez neho by SQLite
   // otvorilo rozostavaný súbor ako rozrobenú transakciu.
   for (const x of [docasny, `${docasny}-journal`]) if (existsSync(x)) rmSync(x, { force: true });
+  /*
+    Rozostavané indexy po cudzích behoch sa upratujú.
+
+    Stavba beží do `<index>.<pid>.stavia` a premenuje sa až hotová — to je
+    ochrana proti prerušeniu a funguje. Čo nefungovalo: prerušený beh ten súbor
+    nechal ležať a ďalší beh mal iné PID, takže naň nikdy nesiahol.
+
+    Namerané na skutočnom projekte po dvoch dňoch: **11 súborov, 254 MB**,
+    teda pätnásťkrát viac než samotný index. Ticho, lebo súbor s bodkou na
+    začiatku nikto nevidí a `du` nikto nespúšťa.
+
+    Maže sa len to, čo je staršie než hodina — bežiaca stavba trvá sekundy,
+    takže hodina je bezpečná aj vtedy, keď dva procesy stavajú naraz.
+  */
+  try {
+    const kde = dirname(cesta);
+    const zaciatok = `${basename(cesta)}.`;
+    for (const f of readdirSync(kde)) {
+      if (!f.startsWith(zaciatok) || !/\.\d+\.stavia(-journal)?$/.test(f)) continue;
+      const plna = join(kde, f);
+      if (plna === docasny || plna === `${docasny}-journal`) continue;
+      if (Date.now() - statSync(plna).mtimeMs < 3600_000) continue;
+      rmSync(plna, { force: true });
+    }
+  } catch { /* Upratovanie nesmie zabrániť stavbe indexu. */ }
   const db = new DatabaseSync(docasny);
-  let spolu = 0, suborov = 0;
+  let spolu = 0, suborov = 0, tem = 0, auto = 0;
   try {
     db.exec(SCHEMA);
+    db.exec(SCHEMA_TEMY);
     // Jedna transakcia odstráni potvrdenie každého jednotlivého úseku.
     db.exec('BEGIN');
     const vloz = db.prepare('INSERT INTO useky (subor, od, doo, text) VALUES (?, ?, ?, ?)');
+    const vlozTemu = db.prepare('INSERT INTO temy (druh, den, subor, od, doo, nadpis) VALUES (?, ?, ?, ?, ?, ?)');
     for (const f of readdirSync(priecinok)) {
       if (!f.endsWith('.md') || f.startsWith('.')) continue;
       const t = readFileSync(join(priecinok, f), 'utf8').replace(ZNACKA, '');
       for (const u of useky(t)) { vloz.run(f, u.od, u.do, u.text); spolu++; }
+      // Auto-témy len pre archív, ktorý k tejto stope patrí. Pri `--index <iný
+      // priečinok>` by ukazovali do prepisov, o ktorých rozcestník nič nevie.
+      if (priecinok === ARCHIVE) {
+        for (const x of autoTemy(f, t)) { vlozTemu.run(x.druh, x.den, x.subor, x.od, x.doo, x.nadpis); auto++; }
+      }
       suborov++;
+    }
+    if (priecinok === ARCHIVE) {
+      for (const x of temyZoStopy()) { vlozTemu.run(x.druh, x.den, x.subor, x.od, x.doo, x.nadpis); tem++; }
     }
     db.exec('COMMIT');
   } finally {
@@ -177,7 +311,10 @@ function postavIndex(priecinok = ARCHIVE) {
   }
   // Starý index zostáva dostupný až do nahradenia hotovým súborom.
   renameSync(docasny, cesta);
-  if (!TICHO) console.log(`Index: ${spolu} chunks from ${suborov} transcripts -> ${cesta}`);
+  if (!TICHO) {
+    console.log(`Index: ${spolu} chunks from ${suborov} transcripts -> ${cesta}`);
+    console.log(`Topics: ${tem} from the trail, ${auto} derived from the archive`);
+  }
 }
 
 /**
@@ -305,10 +442,51 @@ function podlaSuboru(cesta, n = 8) {
   */
   const zoradene = [...podlaRelacie.values()].sort((a, b) => (a.den ?? '').localeCompare(b.den ?? ''));
 
+  /*
+    Najbližšia téma nad nálezom — a poctivo len to.
+
+    Zoznam relácií hovorí, kde sa súbor menil, nie prečo. To býva zapísané v
+    stope o kus vyššie v tom istom prepise, lebo poradie je vecné: najprv sa
+    rozhodne, potom sa mení kód.
+
+    ⚠️ Ako silný ten signál je, závisí od toho, z ktorej strany sa meria, a
+    rozdiel je poučný. Zo strany tém: **66 %** ukazovateľov má do tristo
+    riadkov za sebou úpravu. Zo strany úprav — čo je strana, ktorá platí tu —
+    má tému do tristo riadkov pred sebou len **12 %** zo 6 824 úprav. Tém je
+    436, úprav je pätnásťnásobok, takže prvé číslo o užitočnosti tohto výpisu
+    nehovorí takmer nič.
+
+    Preto sa vypisuje ako to, čo naozaj je: najbližšia téma nad nálezom, so
+    vzdialenosťou. Žiadne tvrdenie o príčine — na to je 12 % primálo a
+    „ukazovateľ, ktorý je správny väčšinou" je v tomto projekte zamietnutý
+    tvar. Keď téma nie je, riadok nie je; nič sa nedopĺňa dohadom.
+  */
+  const OKNO = 300;
+  const temy = temyZoStopy();
+  const podlaPrepisu = new Map();
+  for (const t of temy) {
+    let z = podlaPrepisu.get(t.subor);
+    if (!z) podlaPrepisu.set(t.subor, (z = []));
+    z.push(t);
+  }
+  const predchadzajucaTema = (subor, riadok) => {
+    const kandidati = (podlaPrepisu.get(subor) ?? [])
+      .filter((t) => t.doo <= riadok && riadok - t.doo <= OKNO)
+      .sort((a, b) => b.doo - a.doo);
+    return kandidati[0] ?? null;
+  };
+
   for (const x of zoradene.slice(-n)) {
-    console.log(`${x.den ?? '????-??-??'}  ${x.subor}:${x.riadok}  (${x.krat}x)\n   ${x.text}\n`);
+    console.log(`${x.den ?? '????-??-??'}  ${x.subor}:${x.riadok}  (${x.krat}x)\n   ${x.text}`);
+    const t = predchadzajucaTema(x.subor, x.riadok);
+    if (t) console.log(`   ↳ nearest topic ${x.riadok - t.doo} lines above: ${t.nadpis}  (${t.subor}:${t.od}-${t.doo})`);
+    console.log('');
   }
   console.log(`${podlaRelacie.size} session(s), oldest first. Open a line range to see what was said.`);
+  if (temy.length) {
+    console.log('"nearest topic N lines above" is proximity in the transcript, not a proven cause —');
+    console.log('measured, only 12 % of edits have a trail topic within 300 lines before them.');
+  }
 }
 
 /*
@@ -329,11 +507,18 @@ function podlaSuboru(cesta, n = 8) {
 const SCHEMA = `CREATE VIRTUAL TABLE useky USING fts5(
     subor UNINDEXED, od UNINDEXED, doo UNINDEXED, text,
     tokenize='unicode61 remove_diacritics 2')`;
+const SCHEMA_TEMY = `CREATE VIRTUAL TABLE temy USING fts5(
+    druh UNINDEXED, den UNINDEXED, subor UNINDEXED, od UNINDEXED, doo UNINDEXED, nadpis,
+    tokenize='unicode61 remove_diacritics 2')`;
 
 function sediSchema(db) {
   try {
-    const r = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='useky'").get();
-    return String(r?.sql ?? '').replace(/\s+/g, ' ').trim() === SCHEMA.replace(/\s+/g, ' ').trim();
+    const rovnake = (a, b) => String(a ?? '').replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim();
+    const u = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='useky'").get();
+    if (!rovnake(u?.sql, SCHEMA)) return false;
+    // Index spred úrovne tém je platný, len neúplný — prestavia sa rovnako.
+    const t = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='temy'").get();
+    return rovnake(t?.sql, SCHEMA_TEMY);
   } catch {
     return false;
   }
@@ -414,9 +599,92 @@ function hladaj(vyraz, n = 8) {
     console.error(`Could not parse the query: ${e.message}`);
     process.exit(1);
   }
-  if (!r.length) { console.log('Nothing. Try fewer words, or different ones.'); return; }
-  for (const x of r) console.log(`${x.subor}:${x.od}-${x.doo}\n   ${String(x.ukazka).replace(/\s+/g, ' ').slice(0, 220)}\n`);
+  /*
+    Témy sa pýtajú tým istým dotazom, len inej tabuľky.
+
+    Kurátorské pred odvodenými a oboje pred úsekmi: nadpis, ktorý niekto
+    napísal s otvoreným prepisom, je silnejší dôkaz než veta, ktorú vytiahol
+    regex. Počty sú malé zámerne — celý zmysel tejto úrovne je, že stojí
+    stovky tokenov namiesto dvanástich tisíc.
+  */
+  let temy = { trail: [], auto: [] };
+  try {
+    const surove = db.prepare(
+      `SELECT druh, den, subor, od, doo, nadpis, bm25(temy) AS skore
+       FROM temy WHERE temy MATCH ? ORDER BY skore LIMIT 40`,
+    ).all(dopyt);
+    const videne = new Set();
+    for (const x of surove) {
+      const k = `${x.subor}:${x.od}`;
+      if (videne.has(k)) continue;
+      videne.add(k);
+      const kam = x.druh === 'trail' ? temy.trail : temy.auto;
+      if (kam.length < (x.druh === 'trail' ? 4 : 3)) kam.push(x);
+    }
+  } catch { /* Index spred tejto verzie témy nemá; úseky odpovedia samy. */ }
+
+  // Zavrieť sa musí aj po prázdnom výsledku — inak zostane otvorený handle,
+  // čo je na Windowse rozdiel medzi „súbor sa dá nahradiť" a „nedá".
   db.close();
+
+  const temaRiadok = (x) => `   ${x.den || '????-??-??'}  ${x.nadpis}\n      → ${x.subor}:${x.od}-${x.doo}`;
+  if (temy.trail.length) {
+    console.log('Trail topics (written by hand, strongest evidence):');
+    for (const x of temy.trail) console.log(temaRiadok(x));
+    console.log('');
+  }
+  if (temy.auto.length) {
+    console.log('Topics derived from the transcripts (generated, not curated):');
+    for (const x of temy.auto) console.log(temaRiadok(x));
+    console.log('');
+  }
+
+  if (!r.length) {
+    if (!temy.trail.length && !temy.auto.length) console.log('Nothing. Try fewer words, or different ones.');
+    else console.log('No passage matched, but the topics above point somewhere — open one.');
+    cerstvost();
+    return;
+  }
+  if (temy.trail.length || temy.auto.length) console.log('Passages:');
+  for (const x of r) console.log(`${x.subor}:${x.od}-${x.doo}\n   ${String(x.ukazka).replace(/\s+/g, ' ').slice(0, 220)}\n`);
+  /*
+    Kedy sa oplatí prečítať celý rozcestník — a kedy nie.
+
+    Toto je poistka proti tomu, čo na tejto zmene môže pokaziť odpoveď: agent
+    sa uspokojí s prvým zásahom prvej úrovne a celú stopu, kde by odpoveď
+    bola, neotvorí. Meranie hovorí, že nadpisy trafia 57,7 % a pri parafráze
+    nič, takže veta o zvyšku musí byť vidieť práve vtedy, keď je vhodná.
+  */
+  if (!temy.trail.length && existsSync(CESTY.trailIndex)) {
+    console.log('No curated topic matched. If the passages above do not answer it,');
+    console.log(`read the whole trail index: ${relative(CESTY.koren, CESTY.trailIndex).split(sep).join('/')}`);
+  }
+  cerstvost();
+}
+
+/*
+  Čerstvosť odpovede, jednou vetou a len keď je čo povedať.
+
+  Hook na začiatku relácie hlási, čo zaostalo, ale rozhoduje sa až tu: kto
+  dostane osem ukazovateľov a nič viac, uzavrie, že v pamäti nič nie je — aj
+  keď index nepozná posledné tri prepisy. Tichá neúplná odpoveď je horšia než
+  hlásená medzera, čo je to isté pravidlo, na ktorom stojí kontrola stavu.
+
+  Stojí to jeden `stat` na prepis nad hotovým zoznamom, žiadne čítanie.
+*/
+function cerstvost() {
+  // V dávke nie: benchmark meria odpovede, nie stav stroja, na ktorom beží.
+  if (TICHO || process.argv.includes('--batch') || !existsSync(ARCHIVE) || !existsSync(INDEX)) return;
+  try {
+    const kedy = statSync(INDEX).mtimeMs;
+    const novsie = readdirSync(ARCHIVE)
+      .filter((f) => f.endsWith('.md') && !f.startsWith('.'))
+      .filter((f) => statSync(join(ARCHIVE, f)).mtimeMs > kedy).length;
+    if (novsie) {
+      console.log(`⚠ ${novsie} transcript(s) are newer than the index, so this answer may miss them.`);
+      console.log('  Rebuild: node memex/scripts/search.mjs --index');
+    }
+  } catch { /* Poznámka o čerstvosti nesmie zhodiť samotnú odpoveď. */ }
 }
 
 /*
@@ -437,7 +705,7 @@ function hladaj(vyraz, n = 8) {
   nie téma. Vynechávajú sa aj slovenské podoby, lebo archív môže niesť
   záznamy staršieho nástroja.
 */
-const HLAVICKA_TAHU = /^## (?:USER - |CLAUDE - |TY · |JA · )/;
+const HLAVICKA_TAHU = /^## (?:USER - |CLAUDE - |CODEX - |TY · |JA · )/;
 
 function osnova(nazovSuboru) {
   const cesta = join(ARCHIVE, nazovSuboru);

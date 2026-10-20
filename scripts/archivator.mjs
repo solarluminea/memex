@@ -6,7 +6,7 @@ import { join, basename } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
 const normalizuj = t => t.replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').trim();
-const hlavička = /^## (?:USER|CLAUDE) - (?:\d{4}-\d{2}-\d{2} \d{2}:\d{2}|\?)(?: <!-- memex:([a-f0-9]{24,64}) -->)?\r?$/gm;
+const hlavička = /^## (?:USER|CLAUDE|CODEX) - (?:\d{4}-\d{2}-\d{2} \d{2}:\d{2}|\?)(?: <!-- memex:([a-f0-9]{24,64}) -->)?\r?$/gm;
 /*
   Hlavička ťahu od iného archivára.
 
@@ -74,7 +74,16 @@ function atomicky(cesta, text) {
   finally { if (existsSync(dočasný)) unlinkSync(dočasný); }
 }
 
-export async function archivuj({ zdroj, cieľ, projekt, ticho, preved }) {
+/*
+  `súbory` je zoznam absolútnych ciest namiesto celého priečinka `zdroj`.
+
+  Claude Code drží prepisy projektu v jednom priečinku, Codex ich rozhadzuje
+  po dňoch do `~/.codex/sessions/RRRR/MM/DD/` spolu so všetkými ostatnými
+  projektmi. Výber, ktoré patria sem, robí adaptér; archivátor len zapisuje.
+  `kľúčPre` dá prepisu meno v archíve — Codex potrebuje predponu, aby sa jeho
+  relácia nikdy nezrazila s Claudovou pod rovnakým identifikátorom.
+*/
+export async function archivuj({ zdroj, súbory: zoznam, kľúčPre, cieľ, projekt, ticho, preved }) {
   const odomkni = zamkni(join(cieľ, '.archive.lock'));
   try {
     const stavCesta = join(cieľ, '.state.json');
@@ -83,10 +92,10 @@ export async function archivuj({ zdroj, cieľ, projekt, ticho, preved }) {
       try { stav = JSON.parse(readFileSync(stavCesta, 'utf8')); }
       catch { throw new Error(`Poškodený stav ${stavCesta}. Archív zostal nezmenený.`); }
     }
-    const súbory = readdirSync(zdroj).filter(f => f.endsWith('.jsonl'));
+    const súbory = zoznam ?? readdirSync(zdroj).filter(f => f.endsWith('.jsonl')).map(f => join(zdroj, f));
     let nové = 0, znakov = 0, upravených = 0, opakovaní = 0;
-    for (const súbor of súbory) {
-      const cesta = join(zdroj, súbor), kľúč = basename(súbor, '.jsonl');
+    for (const cesta of súbory) {
+      const súbor = basename(cesta), kľúč = kľúčPre ? kľúčPre(cesta) : basename(súbor, '.jsonl');
       const výstup = join(cieľ, `${kľúč}.md`);
       const pôvodný = existsSync(výstup) ? readFileSync(výstup, 'utf8') : '';
       const záznamy = prepis(pôvodný);
@@ -122,6 +131,20 @@ export async function archivuj({ zdroj, cieľ, projekt, ticho, preved }) {
       let riadok = 0, potvrdené = 0, deň = stav[kľúč]?.day || '', chyba = false;
       const prírastky = [];
       const zlyhania = new Set(od ? [...pôvodný.matchAll(/^\[Failed\] (.*)$/gm)].map(m => m[1]) : []);
+      /*
+        Veľkosť zdroja pred čítaním, aby sa dalo zistiť, že prepis zaostal.
+
+        Relácia môže pokračovať po tom, čo ju `SessionEnd` zarchivoval — okno
+        sa zavrie neskôr, alebo hook dobehne skôr než posledný ťah. Namerané na
+        tomto archíve: stav 443 riadkov proti 513 v zdroji, teda štyri minúty
+        rozhovoru mimo archívu. Nevidela to ani kontrola stavu, ani hook: oba
+        porovnávajú, ktoré relácie existujú, nie kam v nich archív došiel.
+
+        Meria sa **pred** čítaním zámerne. Keď súbor medzitým narastie, uloží
+        sa menšie číslo a ďalšia kontrola správne povie „zaostáva"; opačné
+        poradie by rozdiel zamlčalo.
+      */
+      const bajtovPred = statSync(cesta).size;
       const čítačka = createInterface({ input: createReadStream(cesta), crlfDelay: Infinity });
       for await (const r of čítačka) {
         riadok++;
@@ -208,7 +231,9 @@ export async function archivuj({ zdroj, cieľ, projekt, ticho, preved }) {
       const hotové = základ + pridané;
       if (hotové !== pôvodný) atomicky(výstup, hotové);
       // Poradie je podstatné: najprv celý prepis, potom poloha. Staré riadky sa nemenia.
-      stav[kľúč] = { lines: potvrdené, day: dátum, hash: odtlačok(hotové) };
+      // `bytes` sa zapíše len po celom prečítaní: po prerušenom čítaní by tvrdilo,
+      // že je pokryté aj to, čo sa nedočítalo.
+      stav[kľúč] = { lines: potvrdené, day: dátum, hash: odtlačok(hotové), ...(chyba ? {} : { bytes: bajtovPred }) };
       atomicky(stavCesta, JSON.stringify(stav, null, 2) + '\n');
       nové += prírastky.length; znakov += pridané.length; if (pridané) upravených++;
       if (chyba) process.exitCode = 1;

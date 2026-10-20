@@ -23,11 +23,21 @@
  */
 import { readdirSync, existsSync, statSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
-import { kde } from './kde.mjs';
+import { kde, prepisyVZdroji, hookVstup } from './kde.mjs';
 
 const TICHO = process.argv.includes('--quiet');
 const CESTY = kde();
+/*
+  Ktorá relácia je práve táto — od hostiteľa, nie odhadom.
+
+  Bez toho hook hlásil, že jedna relácia chýba v archíve, pri každom otvorení
+  okna: vlastný `.jsonl` vznikne skôr, než hook dobehne, a v archíve
+  pochopiteľne nie je. Namerané na tomto projekte — prvý riadok prebiehajúcej
+  relácie 00:10:18, archív predošlej dopísaný 00:10:03, a hlásenie „1 session
+  is not in the archive yet" sedelo v kontexte oboch.
+*/
+const VSTUP = hookVstup();
+const TATO_RELACIA = typeof VSTUP.session_id === 'string' ? VSTUP.session_id : null;
 
 /** Prepisy v archíve. Bodka na začiatku je pracovný súbor, nie relácia. */
 const prepisy = existsSync(CESTY.archive)
@@ -48,21 +58,55 @@ const zaostava = [];
 const kus = (n, jedno, viac) => (n === 1 ? `1 ${jedno} is` : `${n} ${viac} are`);
 
 /*
-  Nový prepis, ktorý ešte nie je archivovaný.
+  Ktoré relácie nie sú v archíve — množiny, nie počty.
 
-  Porovnáva sa počet relácií Claude Code proti počtu súborov v archíve. Je to
-  hrubé — nehovorí to, ktoré chýbajú — ale je to jediné, čo sa dá zistiť bez
-  čítania stoviek megabajtov JSONL.
+  Porovnávali sa počty a kľúč projektu si tento súbor odvodzoval po svojom, čo
+  bola tretia kópia tej istej funkcie. Oboje je odteraz v `kde.mjs`: počet
+  nepovie, ktorá relácia chýba, a rozchádzajúce sa definície kľúča sú presne
+  to, pred čím ten súbor varuje.
+
+  Prebiehajúca relácia sa nepočíta. Keď hostiteľ jej ID nepodal — ručný beh,
+  starší Claude Code — vypadne namiesto nej všetko, čo sa hýbalo v poslednej
+  pol hodine. Je to hrubšie, ale správnym smerom: hook, ktorý raz za čas
+  zamlčí čerstvú reláciu, je lepší než hook, ktorý klame vždy.
 */
-function projectKey(path) {
-  return path.replace(/\\/g, '/').replace(/[:/]/g, '-');
+const NEDAVNO_MS = 30 * 60 * 1000;
+const vZdroji = prepisyVZdroji(CESTY.zdroj.cesta);
+const zarchivovane = new Set(prepisy.map((f) => f.replace(/\.md$/, '')));
+const chybaju = vZdroji.filter((x) => {
+  if (zarchivovane.has(x.id)) return false;
+  if (TATO_RELACIA) return x.id !== TATO_RELACIA;
+  return Date.now() - x.zmenene > NEDAVNO_MS;
+});
+if (chybaju.length) {
+  zaostava.push(`${kus(chybaju.length, 'session', 'sessions')} not in the archive yet — /memex:archive`);
 }
-const zdroj = join(homedir(), '.claude', 'projects', process.env.MEMEX_PROJECT ?? projectKey(process.cwd()));
-if (existsSync(zdroj)) {
-  const relacii = readdirSync(zdroj).filter((f) => f.endsWith('.jsonl')).length;
-  if (relacii > prepisy.length) {
-    zaostava.push(`${kus(relacii - prepisy.length, 'session', 'sessions')} not in the archive yet — /memex:archive`);
-  }
+
+/*
+  Relácia, ktorá po zarchivovaní pokračovala.
+
+  Toto archív nevidel vôbec: porovnávalo sa, ktoré relácie existujú, nie kam v
+  nich archív došiel. Relácia pritom beží ďalej po tom, čo ju `SessionEnd`
+  spracoval — namerané tu, 443 zarchivovaných riadkov proti 513 v zdroji, teda
+  štyri minúty rozhovoru, ktoré v pamäti nie sú a nič to nehlásilo.
+
+  Porovnáva sa veľkosť v bajtoch, ktorú si archivátor zapisuje pri potvrdení.
+  Je to jeden `stat` na reláciu, žiadne čítanie. Stav bez `bytes` je spred
+  tejto verzie a preskočí sa — archív sa tým nezneistí, len sa o ňom zatiaľ
+  nedá povedať viac.
+*/
+const STAV = join(CESTY.archive, '.state.json');
+if (existsSync(STAV)) {
+  try {
+    const stav = JSON.parse(readFileSync(STAV, 'utf8'));
+    const narastene = vZdroji.filter(
+      (x) => x.id !== TATO_RELACIA && Number.isFinite(stav[x.id]?.bytes) && x.bajtov > stav[x.id].bytes,
+    );
+    if (narastene.length) {
+      const kolko = narastene.length === 1 ? '1 archived session has' : `${narastene.length} archived sessions have`;
+      zaostava.push(`${kolko} grown since — /memex:archive`);
+    }
+  } catch { /* Poškodený stav rieši archivátor hlasno; hook kvôli nemu nemlčí o zvyšku. */ }
 }
 
 /*
@@ -83,7 +127,8 @@ if (existsSync(CESTY.index)) {
     if (suborov < prepisy.length) {
       zaostava.push(`the index is missing ${prepisy.length - suborov} transcripts — memex/scripts/search.mjs --index`);
     } else if (novsie) {
-      zaostava.push(`${kus(novsie, 'transcript', 'transcripts')} changed since the index was built — memex/scripts/search.mjs --index`);
+      const kolko = novsie === 1 ? '1 transcript has' : `${novsie} transcripts have`;
+      zaostava.push(`${kolko} changed since the index was built — memex/scripts/search.mjs --index`);
     }
   } catch {
     zaostava.push('the index cannot be read — memex/scripts/search.mjs --index');

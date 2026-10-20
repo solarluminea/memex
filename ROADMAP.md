@@ -97,6 +97,13 @@ comfortably in one read. Check with `wc -c` on it and divide by three.
 topics recur across three or more days out of 153 — the phenomenon is real but
 still small.
 
+↳ **2026-09-09: 11.9k tokens at 260 topics** (38 kB), still under the
+threshold. What changed is that the number stopped being the price of every
+question: tiered lookup (built in 0.25.0, see below) answers one for 832
+tokens and reads the index only as a fallback. The pressure this entry was
+under came from that cost, not from threading — and threading remains the only
+answer to a decision that spans files.
+
 **Shape:** a `thread_key` in the entry, assigned explicitly by the distiller or
 automatically only on an exact slug match within 30 days. Never fuzzy: merging
 two unrelated decisions about "pricing" is worse than not merging them.
@@ -127,9 +134,20 @@ A misspelt query returns nothing and the agent falls back to blind searching.
 Roughly 25 lines of trigram matching, run only when a lookup returns zero, so
 it costs nothing otherwise.
 
-**Trigger:** lookups returning nothing are common. This is not counted yet —
-adding a counter to `map.mjs find` is the first step, and it is smaller than
-the feature.
+**Trigger:** lookups returning nothing are common.
+
+↳ **The counter now exists** (0.24.0). A lookup that returns nothing appends one
+line to `.memex/map-misses.jsonl` — the query and the time, nothing else. It is
+skipped in `--batch`, so a benchmark's three hundred queries cannot poison the
+sample, and in a project with no `.memex/`, which never asked for it.
+
+So the trigger is now readable instead of estimated: `wc -l` on that file
+against the number of lookups in `/memex:stats`. Nothing has been collected
+yet — the honest state is "counting has started", not "the misses are rare".
+Read it after a few weeks of real work, and look at *what* missed as well as
+how often: a misspelling is the case this feature is for, while a query for a
+word that genuinely is not in the repository is grep's cue and no amount of
+trigram matching will help it.
 
 ### Carrying yesterday into today
 
@@ -218,15 +236,25 @@ Not built, for one reason: `grep -rl vykonKwp src/` already returns the same
 files. The gap it would close is narrow — knowing **which** keys are worth
 grepping without being told — and that is a list of 24 lines, not a feature.
 
-### Slicing a file to one function
+### Better questions, not better ranking
 
-`Read` with `offset`/`limit` already does this when the range is known.
+The map's remaining loss is ordering (see *Where the map's loss actually is*),
+and two ideas aimed at it were measured and rejected. What neither tried is a
+signal about the **question** rather than about the file: which of its words
+name the subject and which are incidental. "Move the power column in the deals
+table" is about a table and a column; "so that the offer does not send twice"
+is about sending. Today every word above the rarity floor votes equally.
 
-**Trigger:** the median source file passes ~400 lines. Measured on a real
-project: **median 123, 90th percentile 346** — nine files in ten are small
-enough that reading the whole thing is cheap.
+**Why it is not obvious.** Word order and part of speech would need a parser
+for Slovak, which does not exist here and is the kind of dependency this tool
+refuses. A cheap proxy might be position — a sentence in this repository's
+commits tends to name its subject early — or the query word that matches the
+*fewest* files carrying the most weight, which is a sharper version of what
+rarity weighting already does.
 
----
+**Trigger:** none proposed yet. This entry exists so the next person aiming at
+ranking starts from where the loss is rather than from the weights, which have
+now been swept twice with nothing to show for it.
 
 ## Waiting on a different project
 
@@ -411,6 +439,49 @@ turns fifteen hits into a hundred and fifty.
 
 ## Built since this file was written
 
+**Tiered memory lookup** (0.25.0). Every memory question used to start by
+reading the whole trail index — measured, **11 891 tokens** at 260 topics, and
+one line longer with every topic. A search now returns curated trail topics,
+derived topics and passages in one answer: **832 tokens on five real
+questions, 15.3× less**. The full read stays as the fallback because it is the
+only tier that survives a paraphrase — heading search finds the right entry
+57.7 % of the time and **0 %** when the question deliberately shares no word
+with the heading.
+
+**Auto-trail, as a searchable tier** (0.25.0). The trail is the best-measured
+half of the memory and the one that falls behind, because only a model can
+write it. Two things already in the archive are shaped like entries and cost
+nothing: a heading Claude wrote in an answer, and a question the user asked.
+Measured against a real trail of 436 pointers — headings reach 53.2 %, user
+questions 30.5 %, either **69.3 %**. On that project it is 5 493 derived topics
+beside 436 curated ones.
+
+They are never written into `TRAIL.md` and never called a trail: there are
+thousands, so they can be searched and not read, and a heading from a model is
+a small retelling, which this file concedes rather than hides. What is still
+unmeasured is their **precision** — coverage says they land near what a person
+recorded, not that a match is right. Sample fifty before trusting them further.
+
+**Symbol outline** (0.25.0). This file rejected "slicing a file to one
+function" because the median source file is 123 lines. That was the wrong
+number: the median large **read** is 210 lines and 5 of them get edited. On 152
+real read-then-edit pairs, where a declaration is visible above the edit it
+sits a median **12 lines** below it and 74 % within forty; the outline is 3 %
+of the length of the read. `map.mjs outline <file>` prints declarations with
+line numbers, and `map find` now carries a line for non-UI files too.
+
+⚠️ Lower bound, not a ceiling: 70 of those 152 reads began mid-function, so no
+declaration was in view at all. A whole-file outline reaches those; the
+measurement could not.
+
+**Trail topic beside a file's history** (0.25.0). `search.mjs --file` prints
+the nearest trail topic above each hit, with the distance. Deliberately
+phrased as proximity: from the topics' side the signal looks strong (66 % have
+an edit within 300 lines after them), but from the side that applies here only
+**12 %** of 6 824 edits have a topic within 300 lines before them. There are
+436 topics and fifteen times as many edits, so the first number says almost
+nothing about this feature.
+
 **File → sessions** (`search.mjs --file <path>`). The archive records a summary
 of every tool call, so an edited path is written in it verbatim — measured, 35
 of 37 transcripts carry them. That made the planned git-blame route
@@ -561,6 +632,92 @@ thin because only 330 commits were available to learn from. Re-run the
 upper-bound check first; it costs one script and no implementation.
 
 ---
+
+### Commit messages as hidden terms
+
+A commit message is a sentence a person wrote about a file, in their own
+words. The upper bound looked excellent: of 66 tasks the map fails, **43
+(65 %)** have a query word somewhere in the older commits of the right file.
+
+Built and measured, 2026-09-09, learning only from commits older than every
+evaluated task (`MEMEX_GIT_PRED`), which is stricter than production:
+
+| sentence query, MRR | whole | 1st half | 2nd half |
+|---|---|---|---|
+| baseline | 0.576 | 0.610 | 0.542 |
+| all words, ≤15 commits per file | 0.571 | 0.599 | 0.542 |
+| only words in ≤3 % of commits | 0.571 | 0.599 | 0.542 |
+| only words in ≤1 % of commits | 0.572 | 0.603 | 0.541 |
+
+Single-word queries 0.451 → 0.445. Truthful pointers 92.4 % → 89.9 %. The
+words that would have rescued the 43 rescued them and pulled other files up
+by the same amount; an upper bound counts the first and not the second.
+Removed from the code. **Trigger:** none — three variants, three flat lines.
+
+### Recency as a ranking signal
+
+Of 50 tasks where the right file is in the candidate set but ranked past
+twelve, **50 %** had that file in the 20 commits before the task, while only
+6 % of candidates are that fresh — a likelihood ratio near eight. Measured
+per task, with recency computed from commits before each one:
+
+| 20 commits, sentence query | R@1 | R@12 | MRR whole | 2nd half |
+|---|---|---|---|---|
+| baseline | 47.3 % | 78.0 % | 0.582 | 0.548 |
+| score × 1.25 if fresh | 47.0 % | 79.0 % | 0.581 | 0.539 |
+| score × 1.5 | 46.7 % | 80.0 % | 0.578 | 0.536 |
+| score × 2 | 44.7 % | 80.3 % | 0.567 | 0.521 |
+| fresh wins ties only | 47.3 % | 78.0 % | 0.582 | 0.548 |
+| + 0.3 × median score | 47.3 % | 78.0 % | 0.583 | 0.549 |
+
+As a multiplier it buys the tail with the head — R@12 up, R@1 and the second
+half down. As a tie-break or an additive nudge it does nothing. The signal is
+real and the ranker cannot use it: the files it would promote are already
+ranked by evidence, and freshness is not evidence about *this* question.
+**Trigger:** none.
+
+### Tuning variants do not add up — measure them in combination
+
+Not a rejected feature but a rejected *method*, and it cost two sweeps to see.
+Three knobs of the ranker were swept on the old baseline, where coverage was a
+count of matched words. Two of them looked like small wins. Then coverage was
+changed to sum the words' rarity, and the same knobs were swept again:
+
+| variant | on the old baseline | on the new one |
+|---|---|---|
+| baseline | 0.576 | **0.597** |
+| description weight 2 → 1 | 0.583 (+0.007) | 0.591 (−0.006) |
+| hidden-term weight 1 → 2 | 0.579 (+0.003) | 0.589 (−0.008) |
+| both | — | 0.585 (−0.012) |
+
+Every knob that helped before hurts now, and it is not noise: all three point
+the same way and the effect is larger than the gains they originally showed.
+
+The reason is that all four were answering the same question — how much each
+kind of evidence should count — and weighting coverage by rarity answers it at
+the root. Once the principled version is in, the compensating hacks become
+what they always were: corrections for a mis-weighted term.
+
+Two of them do raise R@12 (80.0 → 81.3 %, and 81.7 % together) while lowering
+MRR and R@1. That is the same trade recency offered and it is refused for the
+same reason: a first result the reader can act on beats a longer list they
+have to work through.
+
+**The rule this leaves:** a sweep is valid only against the baseline it was run
+on. When any part of the ranker changes, previous sweeps expire — re-run them
+before quoting them, and never sum two measured gains.
+
+### Where the map's loss actually is
+
+Worth writing down because it reframes two entries above. Of 300 sentence
+tasks, 66 miss the top twelve. In **50 of them the right file is in the
+candidate set** and ranked lower — median position 31 — and in only 16 is it
+absent. So three quarters of the remaining loss is ordering, not vocabulary,
+which is the opposite of what the ablation table suggests (ranking worth
+0.027). The ablation measured removing the ranker; this measures its ceiling.
+Neither recency nor commit words closed it. What might: a signal about the
+*question*, not the file — which of the query's words is the subject and
+which are incidental. Nothing cheap does that yet.
 
 ## How to use this file
 

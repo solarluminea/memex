@@ -17,14 +17,30 @@ How:
 
    It prints one line per module — path and description. Open the file that
    matches; do **not** guess its contents from the line.
-2. **When a result carries a line number** (`PripadyTabulka.tsx:246`), that is
-   where the description was read from. Read a window around it rather than the
-   whole file — `offset` about ten lines earlier, `limit` thirty — and widen
-   only if what you need is not there. The number is a starting point, not a
-   promise: it marks the first label in the file, and the thing you want may sit
-   further down the same block.
-3. With no argument, rebuild the map:
-   `node ${CLAUDE_PLUGIN_ROOT}/scripts/map.mjs`
+2. **When a result carries a line number** (`PripadyTabulka.tsx:246`), read a
+   window around it rather than the whole file — `offset` about ten lines
+   earlier, `limit` thirty — and widen only if what you need is not there. The
+   number is a starting point, not a promise.
+
+   It comes from one of two places: the first interface label in the file, or
+   the declaration whose name best matches your question. Measured on 152 real
+   read-then-edit pairs from the transcripts: where a declaration is visible
+   above the edit, the edit sits a **median 12 lines** below it and 74 % within
+   forty. The same measurement is the reason to bother — the median large read
+   is **210 lines for 5 edited**.
+
+3. **To see where things are in a file you already know:**
+   `node ${CLAUDE_PLUGIN_ROOT}/scripts/map.mjs outline <file>`
+   One line per top-level declaration with its line number — about 3 % the
+   length of reading the file. Pick a declaration, then `Read` a window around
+   it. Use this instead of opening a large file to find your bearings.
+4. With no argument, rebuild the map:
+   `node ${CLAUDE_PLUGIN_ROOT}/scripts/map.mjs`, in the background
+   (`run_in_background: true`). It prints a single line — modules and how many
+   lack a description — so pass that on and do not open the map. Not
+   `--quiet`: that is the hook's mode, and in a project with no map yet it exits
+   without creating one. Searching it (`find`, `outline`) stays in the
+   foreground: you need that answer now.
 
 If nothing comes back, the map is the wrong tool for that question. Two things
 it deliberately does not do:

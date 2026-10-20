@@ -128,6 +128,7 @@ truthful pointers from 68 % to 99 %, with the output unchanged.
 | situation | command |
 |---|---|
 | "which file does X?" | `/memex:map <the whole task, in a sentence>` |
+| "where in this file?" | `map.mjs outline <file>` — declarations with line numbers, ~3 % of reading it |
 | regularly, so history isn't lost | `/memex:archive` |
 | "why did we do it this way?" | `/memex:search <topic>` |
 | after new sessions pile up | `/memex:distill` |
@@ -142,13 +143,28 @@ the map, so none of them can be forgotten. The map costs no tokens to rebuild �
 
 ## Answering a question from the past
 
-1. Read **all** of `.memex/TRAIL.md`. It's headings only; it fits.
-2. Pick by heading, open the referenced line range in `.memex/archive/`.
-3. If the topic isn't in the trail, search the archive directly with
-   `scripts/search.mjs`.
+1. **Search first.** `scripts/search.mjs "the question" --n 8` returns three
+   tiers at once: trail topics written by hand, topics derived from the
+   transcripts by regex, and passages. Each is a file and a line range.
+2. Open the range with `Read` using `offset`/`limit`.
+3. **Read all of `.memex/TRAIL.md` only when that came up short.** It is
+   headings only, but on a real project it is ~12k tokens against ~800 for the
+   search — measured, a question costs **15× less** when it starts at step 1.
+
+   It still earns that price in one case, so do not skip it out of habit: a
+   question phrased as a paraphrase that shares no word with any heading.
+   Measured — searching headings finds the right entry 57.7 % of the time, and
+   **0 %** when the wording deliberately avoids the heading's words. The tiers
+   are cheap and fallible; the full read is expensive and thorough.
 4. **Always cite file and line numbers.** A claim from memory that can't be
    checked is worse than no claim — in six months nobody will question it and
    people will build on it.
+
+⚠️ A **derived** topic is not a trail entry. It is a heading Claude once wrote
+or a question the user once asked, pulled out by a regex — a good place to
+look, never a conclusion to quote. Measured against a real trail, derived
+topics land within reach of 69.3 % of what a person chose to record, which is
+useful and is not the same thing as being right.
 
 ## What does not belong in it
 

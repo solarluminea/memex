@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, utimesSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -36,6 +36,27 @@ test('Značka udalosti sa neindexuje ani nevypisuje', () => {
   assert.match(výsledok, /a\.md:/);
   assert.doesNotMatch(výsledok, /memex:[a-f0-9]/);
 });
+/*
+  Prerušená stavba nechávala súbor ležať navždy: ďalší beh mal iné PID, takže
+  naň nesiahol. Namerané na skutočnom projekte po dvoch dňoch — 11 súborov,
+  254 MB, teda pätnásťkrát viac než samotný index, a ticho.
+*/
+test('Rozostavaný index po cudzom behu sa uprace', () => {
+  const f = príprava();
+  writeFileSync(join(f.archív, 'a.md'), 'Rozhodnutie o limite.');
+  f.beh(['--index']);
+  const zvysok = join(f.archív, '.search.db.99999.stavia');
+  const cerstvy = join(f.archív, '.search.db.99998.stavia');
+  writeFileSync(zvysok, 'x'.repeat(1000));
+  writeFileSync(cerstvy, 'x'.repeat(1000));
+  // Starý zvyšok je z prerušeného behu, čerstvý môže patriť bežiacej stavbe.
+  const davno = new Date(Date.now() - 7200_000);
+  utimesSync(zvysok, davno, davno);
+  assert.equal(f.beh(['--index']).status, 0);
+  assert.ok(!existsSync(zvysok), 'starý rozostavaný index mal zmiznúť');
+  assert.ok(existsSync(cerstvy), 'čerstvý sa mazať nesmie — môže ho práve písať iný proces');
+});
+
 test('Rovnaký celý úsek sa vráti len raz', () => {
   const f = príprava(); for (const n of ['a', 'b']) writeFileSync(join(f.archív, n + '.md'), 'Totožné rozhodnutie.'); f.beh(['--index']);
   assert.equal((f.beh(['rozhodnutie']).stdout.match(/\.md:\d+-\d+/g) || []).length, 1);

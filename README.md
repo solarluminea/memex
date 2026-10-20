@@ -19,6 +19,10 @@ Needs Node 22.5+ for full-text search (`node:sqlite`). Everything else — the
 archive and the trail — is plain files and works on any version. No npm
 dependencies at all.
 
+Using Codex or ChatGPT? Memex also archives Codex sessions into the same
+archive, ships a dependency-free MCP server (`scripts/mcp.mjs`) and a native
+Codex plugin — see [CODEX.md](CODEX.md).
+
 ---
 
 ## The finding
@@ -93,6 +97,24 @@ are removed only when their complete text matches.
 content. The heading is written so you can decide whether to open it without
 opening it; everything else lives in the transcript.
 
+**Three tiers, one query.** Reading the whole trail index cost **11.9k tokens**
+at 260 topics and every memory question started with it. A search now returns
+curated trail topics, topics derived from the archive by regex, and passages —
+each an exact line range — for **832 tokens on real questions, 15.3× less**.
+
+The full read is not gone, because it earns its price in one case: measured,
+searching headings finds the right entry 57.7 % of the time, and **0 %** when
+the question is a paraphrase that shares no word with the heading. Cheap and
+fallible first, expensive and thorough as the fallback.
+
+The derived tier is free and it is the answer to the trail falling behind —
+only a model can write trail entries, so they lag, while a heading Claude
+already wrote and a question the user already asked are sitting in the archive.
+Measured against a real trail: headings reach 53.2 % of its pointers, user
+questions 30.5 %, either **69.3 %**. They are labelled as generated, never
+written into `TRAIL.md`, and there are thousands of them — searchable, not
+readable.
+
 ```
 # 2026-08-20 · Task steps can't be edited from the settings screen
 
@@ -164,14 +186,28 @@ to a person looking at two periods of real work.
 
 Building it immediately caught a mistake in its own first draft: averaging per
 session showed everything dropping 80 %, which measured how long sessions were,
-not how well they navigated. Per edit, the same data reads 1.2 lookups and 36k
+not how well they navigated. Per edit, the same data reads 1.2 lookups and 15k
 fresh tokens — numbers that mean something.
+
+⚠️ That token figure read **38k** here until 0.24.0, and it was wrong by a
+factor of two and a half. Claude Code writes one model reply as several
+transcript rows — the text, then each tool call — and every row repeats the
+same `usage`, because they belong to one API call. Summing per row charges the
+same input once per piece the reply happened to be cut into. Measured on this
+project: 2 090 rows carrying `usage` against 1 031 distinct `message.id`, so
+input came out **1.98×** too high; recomputed over 84 sessions of a real
+project, 38 263 fresh tokens per edit became **15 085**.
+
+The comparison between halves was never distorted — the error is a multiplier,
+not a shift — but the absolute number is the one people quote, and it was
+inflated. Old telemetry rows carry no version and are recomputed on sight.
 
 ## Commands
 
 | | |
 |---|---|
 | `/memex:map <word>` | which file to open |
+| `map.mjs outline <file>` | where things are inside it — declarations with line numbers |
 | `/memex:archive` | save transcripts, rebuild the index |
 | `/memex:search <topic>` | find where something was decided |
 | `/memex:distill` | build the trail (batch job, tens of minutes) |
@@ -185,10 +221,22 @@ the map, so none of them can be forgotten — without the index step the first
 search of a fresh install answers `No index` and costs a whole turn to fix. Always-on cost is about **310 tokens** per session; everything else
 is paid on use.
 
+Those four steps are **one** command, and that is the point. They were four
+entries under the same event until 0.24.0, which reads like a sequence and is
+not one: hooks on the same event run in parallel and the order they finish in
+is not guaranteed. So the index could be built over an archive still being
+written, and end up not knowing the newest session — with both steps exiting
+zero. Measured here, the gap was 300 ms in the right direction; it only has to
+be the wrong way round once.
+
 A SessionStart hook checks what fell behind — file times and two counts from
 the finished index, 0.19 s — and stays quiet unless something actually is.
 Quiet also in a project with no archive, because the hook is installed per user
-and fires everywhere.
+and fires everywhere. It reads the `session_id` the host hands it, so the
+session you are sitting in is not counted as missing from the archive: it
+cannot be there yet, and reporting it made the warning false at every single
+startup. A reminder that cries wolf every time is one nobody reads the day it
+is right.
 
 It exists because work at session end can simply not finish. Measured on a real
 archive of 69 transcripts: rebuilding the index took 128.5 seconds and the
@@ -362,7 +410,8 @@ in three hundred and connects nothing. None of it is printed.
 |---|---|---|---|---|
 | printed terms only | 30.0 % | 42.3 % | 56.7 % | 0.374 |
 | + hidden terms | 44.3 % | 60.0 % | 73.7 % | 0.535 |
-| **+ words with diacritics** | **47.7 %** | **63.3 %** | **81.7 %** | **0.574** |
+| + words with diacritics | 47.7 % | 63.3 % | 81.7 % | 0.574 |
+| **+ coverage weighted by rarity** | **50.0 %** | **66.3 %** | **80.0 %** | **0.597** |
 
 It is the largest single change measured on the map: **+53 % MRR**, holding on
 both halves of the set. Single-word queries go 0.206 → 0.263 and their empty
@@ -385,6 +434,17 @@ further.
 The cost is honest and small: the map takes 1.76 s to build instead of 1.0, and
 a query touches 18.8 modules on average instead of 7.2. The output is still cut
 at twelve lines, so that shows up only in the "of how many" count.
+
+That last row is a change to the ranker, not to what the map knows. Coverage —
+how much of the question a file touches — used to be a count of matched words,
+so two common words outweighed one rare one, although the rare word is the
+part that tells files apart. Summing the weights instead is one line and worth
+**0.021 of MRR**. It holds on four halves of four: chronologically +0.036 and
++0.007, and on a new alternating split (`BENCH_MOD`, which puts the same period
+on both sides) the same. That asymmetry is worth stating rather than hiding —
+the gain is five times larger on one half — but nothing lost anywhere, and
+single-word queries and pointer truthfulness are unchanged to three decimals,
+because only the order moves.
 
 ### What each part is worth
 
@@ -441,6 +501,34 @@ One trap on the way: an abbreviation must be matched as a whole segment of an
 identifier. As a substring, `ean` sits inside `boolean` and `ico` inside
 `unicode` — the first measurement reported 168 hits for `ean`, of which the
 number that were real was zero.
+
+### Where the remaining loss actually is
+
+Worth knowing before anyone tunes further. Of 300 sentence tasks, 66 miss the
+top twelve. In **50 of them the right file is in the candidate set** and simply
+ranked lower — median position 31 — and in only 16 is it absent altogether. So
+three quarters of what is left is ordering, not vocabulary.
+
+That is the opposite of what the ablation table suggests, and both are true:
+the ablation measures *removing* the ranker, this measures its ceiling.
+
+Two ideas aimed at that ceiling were built and rejected on the numbers:
+
+**Commit messages as hidden terms.** A commit message is a sentence a person
+wrote about a file. The upper bound was excellent — 43 of the 66 failures have
+a query word in the older commits of the right file. Built, and measured
+learning only from commits older than every evaluated task: 0.576 → 0.571,
+and truthful pointers 92.4 % → 89.9 %. Restricting it to rare words changed
+nothing (0.571, 0.572). The words that would have rescued those 43 pulled other
+files up by as much; an upper bound counts the first and not the second.
+
+**Recency from git.** Of the 50 ranking failures, 50 % had the right file in
+the 20 commits before the task, while only 6 % of candidates are that fresh — a
+likelihood ratio near eight. As a multiplier it buys the tail with the head
+(R@12 78 → 80 %, R@1 47.3 → 44.7 %, second half 0.548 → 0.521); as a tie-break
+or a small additive nudge it does nothing at all. The signal is real and the
+ranker cannot use it: the files it would promote are already ranked by evidence
+about the question, and freshness is not evidence about *this* question.
 
 ### What recall cannot see
 
