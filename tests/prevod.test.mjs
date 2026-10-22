@@ -44,6 +44,11 @@ test('Bežný text, hash commitu a krátke hodnoty zostanú', () => {
     'https://example.com/cesta?x=1',
     'Žiadosť o 6,99 % úver — skontrolované.',
     'process.env.MEMEX_MCP_TOKEN || randomBytes(18)',
+    // Falošné poplachy nájdené nad skutočným archívom.
+    'ONLYOFFICE_JWT_SECRET=…set…',
+    'KROS_FIRMA_SECRET=nastavené',
+    'grep "ONLYOFFICE_JWT_SECRET=.*…"',
+    'SECRET_KEY=required',
   ]) assert.equal(redakcia(t), t);
 });
 

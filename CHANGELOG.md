@@ -1,5 +1,15 @@
 # Zmeny
 
+## 0.27.3 — redakcia bez falošných poplachov
+
+Pred prvým commitom dobehnutého archívu sa celý prešiel novou redakciou:
+18 zásahov, ani jeden skutočný kľúč. Premenná `…_SECRET=` sa zachytávala
+aj s hodnotou `…s…` (výpustka z výpisu), regulárnym výrazom či slovenským
+slovom; kľúč teraz musí mať znaky kľúča a číslicu alebo dvadsať znakov.
+Súkromný kľúč musí mať telo aspoň 64 znakov — 37 znakov medzi `BEGIN` a
+`END` je zástupný text z návodu. Pribudol `.codex/environments/` pre
+aplikáciu Codex.
+
 ## 0.27.2 — päť návrhov overených skôr, než sa postavili
 
 Po audite 0.27.0 vzniklo sedem návrhov. Všetky sa najprv zmerali na tom istom

@@ -54,7 +54,8 @@ const TAJOMSTVA = [
   [v(String.raw`xox[baprs]-[A-Za-z0-9-]{10,}`), 'slack'],
   [/https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/]+/g, 'slack webhook'],
   [v(String.raw`eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{5,}`), 'jwt'],
-  [/-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g, 'private key'],
+  // Telo kľúča má stovky znakov; 37 znakov medzi BEGIN a END je zástupný text z návodu.
+  [/-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]{64,}?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g, 'private key'],
   [v(String.raw`[Bb]earer\s+[A-Za-z0-9._~+/=-]{20,}`), 'bearer'],
   // Heslo v adrese: `postgres://meno:heslo@server`. Meno zostáva, heslo nie.
   [/(?<=[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@/]{3,}(?=@)/gi, 'password'],
@@ -65,8 +66,14 @@ const TAJOMSTVA = [
   Komentár vyššie odjakživa uvádzal `export TOKEN=…` ako dôvod redakcie, a
   pravidlo naň neexistovalo. Meno zostáva, aby bolo vidieť, čo sa nastavovalo;
   hodnota od ôsmich znakov, aby `TOKEN_LIMIT=500` zostalo čitateľné.
+
+  Hodnota je znak kľúča — písmená, číslice, `_-+/=.` — a má aspoň jednu
+  číslicu alebo dvadsať znakov. Prvá verzia brala čokoľvek bez medzery a nad
+  skutočným archívom zachytila 17 hodnôt, z ktorých ani jedna nebola kľúč:
+  `ONLYOFFICE_JWT_SECRET=…s…` (výpustka z výpisu), regulárny výraz,
+  slovenské slovo. Náhodný kľúč číslicu skoro vždy má.
 */
-const PREMENNA = /\b([A-Z][A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY)[A-Z0-9_]*)(\s*[=:]\s*)(["']?)[^\s"'$]{8,}\3/g;
+const PREMENNA = /\b([A-Z][A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY)[A-Z0-9_]*)(\s*[=:]\s*)(["']?)((?=[A-Za-z0-9_+/=.-]*\d)[A-Za-z0-9_+/=.-]{8,}|[A-Za-z0-9_+/=.-]{20,})\3(?![^\s"'])/g;
 
 export const redakcia = (t) => TAJOMSTVA
   .reduce((s, [vzor, meno]) => s.replace(vzor, `[redacted:${meno}]`), String(t))

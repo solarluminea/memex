@@ -1,6 +1,6 @@
 {
   "name": "memex",
-  "version": "0.27.2",
+  "version": "0.27.3",
   "description": "Project memory and a code map for Codex. Archives Codex (and Claude Code) session transcripts into the project, indexes them for full-text search, and answers with pointers to exact line ranges instead of summaries. Shares one archive with the Claude Code plugin.",
   "author": {
     "name": "Luminea PowerAI",
