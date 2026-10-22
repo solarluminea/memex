@@ -16,6 +16,9 @@
  *           Nadpis záznamu je dotaz, jeho rozsah riadkov je správna odpoveď —
  *           kľúč, ktorý nikto pre tento test nepísal, rovnako ako pri commitoch.
  *
+ * `vyzvy`   Nájde mapa súbor, ktorý agent upravil po zadaní človeka? Kľúč je
+ *           z archívu: veta používateľa a nasledujúce `[Tool: Edit …]`.
+ *
  * `parafraza` Nájde sa téma stopy, keď sa pýta slovami z rozhovoru, nie z
  *           nadpisu? Úroveň tém pozri pri funkcii `parafraza()`.
  *
@@ -400,8 +403,67 @@ function parafraza() {
   return `témy stopy, ${zaznamy.length} záznamov\n  ${zmeraj('rozsah')}\n  ${zmeraj('nadpis')}`;
 }
 
+/*
+  Benchmark mapy na zadaniach človeka, nie na správach commitov.
+
+  Správa commitu sa píše potom, keď je jasné, čo sa zmenilo — a pomenúva to.
+  Zadanie sa píše predtým a opisuje problém: „na zákazkách nejde uložiť
+  poznámka". Archív má obe polovice kľúča: vetu používateľa a cesty, ktoré
+  agent potom upravil (`[Tool: Edit …]`). Nikto ich nepísal pre test.
+
+  Namerané na skutočnom projekte, 400 zadaní: **MRR 0,183**, R@3 20,8 %,
+  R@12 32,3 % — proti 0,735 na správach commitov toho istého repozitára.
+  Benchmark z commitov teda mapu preceňuje zhruba štvornásobne, a práve tam,
+  kde by mala pomáhať: pred prvým krokom. Časť zadaní sa ani nedá trafiť —
+  „pokračuj", „oprav to" — ale to je aj skutočná otázka, akú dostane.
+
+  Upravený súbor sa počíta, len keď je to kód, ktorý dnes existuje: mapa je
+  o dnešnom repozitári, rovnako ako pri commitoch.
+*/
+function vyzvy() {
+  const { archive } = kde();
+  if (!existsSync(archive)) return `archív nie je v ${archive}`;
+  const rel = (c) => /(?:^|[\\/])((?:src|scripts)[\\/].+)$/.exec(c.trim())?.[1]?.replace(/\\/g, '/') ?? null;
+  const ulohy = [];
+  for (const f of readdirSync(archive).filter((x) => x.endsWith('.md') && !x.startsWith('.')).sort()) {
+    const t = readFileSync(join(archive, f), 'utf8').replace(/ <!-- memex:[a-f0-9]+ -->/g, '');
+    let u = null;
+    for (const tah of t.split(/\n(?=## (?:USER|CLAUDE|CODEX) - )/)) {
+      if (tah.startsWith('## USER - ')) {
+        if (u) ulohy.push(u);
+        u = { text: tah.split('\n').slice(1).join(' ').replace(/```[\s\S]*?```/g, ' ').replace(/\s+/g, ' ').trim(), subory: new Set() };
+        continue;
+      }
+      if (!u) continue;
+      for (const r of tah.split('\n')) {
+        const m = /^\[Tool: (?:Edit|Write|MultiEdit) (.+)\]$/.exec(r.trim());
+        const c = m && rel(m[1]);
+        if (c && /\.(ts|tsx|mjs|mts|js)$/.test(c) && existsSync(join(APP, c))) u.subory.add(c);
+      }
+    }
+    if (u) ulohy.push(u);
+  }
+  const platne = ulohy.filter((u) => u.text.length >= 30 && u.text.length <= 2000 && u.subory.size && u.subory.size <= 6);
+  const pocet = N === 300 ? 400 : N;
+  const krok = Math.max(1, Math.floor(platne.length / pocet));
+  const sada = platne.filter((_, i) => i % krok === 0).slice(0, pocet);
+  if (!sada.length) return 'žiadne zadania s úpravou kódu v archíve';
+  const vys = odpovede(sada.map((u) => undia(u.text.slice(0, 400))));
+  let r1 = 0, r3 = 0, r12 = 0, mrr = 0;
+  const pol = [0, 0];
+  sada.forEach((u, i) => {
+    const p = (vys[i]?.cesty ?? []).findIndex((c) => u.subory.has(c));
+    if (p < 0) return;
+    mrr += 1 / (p + 1); pol[i % 2] += 1 / (p + 1);
+    if (p < 1) r1++; if (p < 3) r3++; if (p < 12) r12++;
+  });
+  const n = sada.length, pc = (x) => ((x / n) * 100).toFixed(1).padStart(5);
+  return `n=${String(n).padStart(3)}  R@1 ${pc(r1)}%  R@3 ${pc(r3)}%  R@12 ${pc(r12)}%  MRR ${(mrr / n).toFixed(3)}  (párne ${(pol[0] / Math.ceil(n / 2)).toFixed(3)}, nepárne ${(pol[1] / Math.floor(n / 2)).toFixed(3)})`;
+}
+
 const stitok = (process.env.MEMEX_ABLATE ? `bez: ${process.env.MEMEX_ABLATE}` : 'plná mapa').padEnd(22);
 if (REZIM === 'parafraza') { console.log(parafraza()); process.exit(0); }
+if (REZIM === 'vyzvy') { console.log(`${stitok}${vyzvy()}`); process.exit(0); }
 if (REZIM === 'pravda') console.log(`${stitok}\n${pravda(ulohy(zoSlov))}`);
 else if (REZIM === 'skratky') console.log(`${stitok}${recall(ulohy(zoSkratiek))}`);
 else if (REZIM === 'veta') console.log(`${stitok}${recall(ulohy(zVety))}`);

@@ -649,6 +649,61 @@ lost to a `slice`, and it lost on every mode tried.
 **Trigger:** none. If someone wants to revisit it, the bar is beating 0.374 on
 `bench.mjs veta` and 0.206 on `BENCH_W=1 bench.mjs`, on both halves.
 
+### Five proposals checked on 2026-10-22, four left out
+
+Proposed after the 0.27.0 audit and measured on the same project (720
+transcripts, 655 of them subagents) before anything was built.
+
+**Context for subagents from a `SubagentStart` hook.** Subagents are 56 % of
+the price, so it looked like the biggest lever. The part a map or a memory
+could shorten — everything before a subagent's first edit — is **12.9 %** of
+their cost, and **87 %** of their prompts already name the file. The hook
+does not receive the task text either, so it could only inject something
+generic. What subagents cost is the work itself; on this project it is
+mostly general-purpose runs on the largest model, which is a choice of
+model, not of memory. **Trigger:** the hook receives the prompt, and the
+pre-edit share passes 30 %.
+
+**The map offered on every prompt** (`UserPromptSubmit`). Measured with the
+new `bench.mjs vyzvy` on 400 real prompts: the edited file is in the top
+three **20.8 %** of the time, and the agent needs a median of three reads
+before its first edit anyway. The hook blocks the prompt while it runs (two
+seconds per lookup), and what it adds stays in context until compaction.
+**Trigger:** `vyzvy` R@3 above 50 % and a lookup under 0.3 s.
+
+**One trail file per day instead of per topic.** The reason was 10 540
+small files taking 12.7 s to read; since 0.27.1 the hooks and `--file` read
+the topics from the index. The project's own distiller writes this format,
+so a change breaks it. **Trigger:** `status.mjs` or an incremental index
+with nothing new above five seconds.
+
+**Cheaper distillation.** The project's distiller runs on the smallest model:
+12.9 % of subagent tokens, about 1.5 % of the price once model prices are
+taken into account. **Trigger:** distillation above 10 % of the price.
+
+**Newer decisions ranked first.** There is no test set to tell a better order
+from a worse one; `Valid until` appears in none of 10 536 entries; and the
+search was called 27 times in two and a half months. **Trigger:** a set of
+"what is the current state" questions on which the newest topic is right
+and the first-ranked one is not.
+
+What passed: measuring re-reading after compaction (`kontext.mjs
+--kompakcie`), needed to judge the earlier compaction at all — measured,
+43 % of reads in the first forty tools after a compaction are files read
+before it, about 7.4k tokens each time, and the archive was touched four
+times after 67 compactions. And the real-prompt benchmark, which found the
+next entry.
+
+### The commit-message benchmark overstates the map four times
+
+`bench.mjs vyzvy` takes the user's sentence from the archive and the files
+the agent then edited. Same repository, same day: **MRR 0.183** against 0.735
+on commit messages, R@12 32 % against 92 %. A commit message is written after
+the change and names it; a prompt is written before and describes a problem,
+or says "continue". Every map number in the README is from commit messages
+and should be read as an upper bound. **Trigger for work on the map:** this
+benchmark, not the commit one.
+
 ### A short passage scored by its neighbours
 
 Chunk size is a trade — 2 000 characters had the best MRR and four times the

@@ -366,6 +366,13 @@ changed are the correct answer: *"Power belongs next to the name, offer button
 right after"* → `DealsTable.tsx`. Nobody wrote those for this test, so they cannot
 be tuned to what the map happens to know.
 
+⚠️ **Since 2026-10-22 there is a harder benchmark, and it says less.**
+`bench.mjs vyzvy` uses the user's own prompt from the archive and the files
+the agent edited after it. On the same repository the map scores **MRR 0.183**
+there against 0.735 on commit messages. A commit message names the change
+after it happened; a prompt describes a problem before. Read every map
+number below as an upper bound.
+
 ### First, the number that was wrong
 
 A hit used to count when the **filename** matched, on the reasoning that files

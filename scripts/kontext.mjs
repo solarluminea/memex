@@ -32,10 +32,11 @@
  *
  *   node memex/scripts/kontext.mjs            prehľad
  *   node memex/scripts/kontext.mjs --strop    + simulácia skoršej kompakcie
+ *   node memex/scripts/kontext.mjs --kompakcie  + opätovné čítanie po kompakcii a využitie pamäte
  */
 import { createReadStream, readdirSync, existsSync, statSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { kde } from './kde.mjs';
 
 const CESTY = kde();
@@ -102,6 +103,18 @@ const vyprsala = (x) => x.k > 50e3 && x.cw > 0.5 * x.k && !x.h;
 const HRANICE = [50e3, 100e3, 200e3, 400e3, 700e3, Infinity];
 const NAZVY = ['<50k', '<100k', '<200k', '<400k', '<700k', '≥700k'];
 const STROPY = [150e3, 200e3, 300e3, 500e3];
+/*
+  Koľko sa po kompakcii znova prečíta — tri predpoklady.
+
+  Namerané (`--kompakcie`) na 67 kompakciách skutočného projektu: v prvých
+  štyridsiatich nástrojoch po kompakcii je 43 % čítaní súbor, ktorý sa čítal
+  už pred ňou, okolo 7,4 tisíca tokenov na kompakciu. Desať tisíc je teda to,
+  čo sa stalo, so zaokrúhlením nahor; tridsať je rezerva pre prípad, že pri
+  častejšej kompakcii bude agent čítať viac. Pri strope 200k to dáva 62 %
+  dnešnej ceny, s rezervou 66 %.
+*/
+const PRERAZKY = [0, 10e3, 30e3];
+const KOMPAKCIE = process.argv.includes('--kompakcie');
 
 /**
  * Tie isté volania pri strope kontextu `C`.
@@ -145,11 +158,11 @@ for (const s of zoznam) {
     podlaVelkosti[HRANICE.findIndex((h) => x.k < h)] += c;
     if (vyprsala(x)) vyprsane += x.cw * W.cw;
   }
-  if (STROP) for (const C of STROPY) for (const R of [0, 30e3]) {
+  if (STROP) for (const C of STROPY) PRERAZKY.forEach((R, i) => {
     const k = `${C / 1000}k`;
-    sim[k] ??= [0, 0];
-    sim[k][R ? 1 : 0] += simuluj(r, C, R);
-  }
+    sim[k] ??= PRERAZKY.map(() => 0);
+    sim[k][i] += simuluj(r, C, R);
+  });
 }
 if (!pocet) { console.log('Žiadne volania API v prepisoch.'); process.exit(0); }
 
@@ -160,11 +173,80 @@ console.log('  ' + NAZVY.map((n, i) => `${n} ${pc(podlaVelkosti[i])}`).join(' ·
 console.log(`\nVypršaná cache (celý kontext zapísaný znova): ${pc(vyprsane)} ceny.`);
 console.log(`Podagenti: ${pc(podagenti)} ceny, hlavné relácie ${pc(hlavne)}.`);
 if (STROP) {
-  console.log('\nKeby sa kompaktovalo pri strope — cena oproti skutočnosti (bez / s 30k doplneného čítania):');
-  for (const [k, [a, b]] of Object.entries(sim)) {
-    console.log(`  ${k.padEnd(6)} ${((a / spolu) * 100).toFixed(0).padStart(4)} %  ${((b / spolu) * 100).toFixed(0).padStart(4)} %`);
+  console.log('\nKeby sa kompaktovalo pri strope — cena oproti skutočnosti, pri 0 / 10k / 30k doplneného čítania po kompakcii:');
+  for (const [k, hodnoty] of Object.entries(sim)) {
+    console.log(`  ${k.padEnd(6)}` + hodnoty.map((v) => `${((v / spolu) * 100).toFixed(0).padStart(4)} %`).join('  '));
   }
   console.log('\nSimulácia, nie meranie: nevie, čo by súhrn kompakcie stratil. Strop sa nastavuje');
   console.log('v Claude Code — nastavenie autoCompactWindow alebo príkaz /autocompact.');
 }
 console.log('\nVáhy sú pomerné (vstup 1, zápis 1,25, čítanie 0,1, výstup 5) — podiely platia, sumy nie.');
+
+/*
+  `--kompakcie` — čo kompakcia stojí v práci, nie v tokenoch súhrnu.
+
+  Skoršia kompakcia je lacnejšia len vtedy, keď ju agent nezaplatí znova
+  čítaním. Toto meria presne to: v prvých štyridsiatich volaniach nástrojov
+  po každej kompakcii, koľko čítaní je súbor, ktorý sa čítal už pred ňou, a
+  koľko je ich výstupu. A či sa po kompakcii siahlo do archívu — na to sú
+  hooky `PreCompact` a `SessionStart` (compact), a toto je ich skúška.
+
+  Druhá vec je využitie pamäte vôbec: koľkokrát sa zavolalo hľadanie, ako
+  často agent potom naozaj otvoril vrátený prepis, a koľko sa do archívu
+  siahlo priamo grepom alebo čítaním. Namerané na skutočnom projekte za dva a
+  pol mesiaca: 27 volaní `search.mjs` proti tisícom priamych čítaní archívu.
+*/
+if (KOMPAKCIE) {
+  const archivVKoreni = relative(CESTY.koren, CESTY.archive).replace(/\\/g, '/').toLowerCase();
+  const doArchivu = (s) => s.replace(/\\/g, '/').toLowerCase().includes(archivVKoreni);
+  const CESTA = /(?:[A-Za-z]:)?[\w./\\[\]-]*\.(?:tsx?|jsx?|mjs|cjs|json|md|css|sql|py|prisma|ya?ml|html|txt)\b/g;
+  const citane = (name, input) => {
+    if (name === 'Read') return [String(input?.file_path ?? '')];
+    if (name !== 'Bash' && name !== 'PowerShell') return [];
+    const p = String(input?.command ?? '');
+    return /(^|[;&|]\s*)(cat|head|tail|sed -n)\b|\bGet-Content\b/.test(p) ? (p.match(CESTA) ?? []) : [];
+  };
+  const norm = (c) => c.replace(/\\/g, '/').toLowerCase();
+  const K = { n: 0, citani: 0, znova: 0, znovaZnakov: 0, doArchivu: 0 };
+  const P = { hladani: 0, otvorene: 0, priamo: 0 };
+  for (const s of zoznam) {
+    const nastroje = [], vysledky = new Map();
+    const rl = createInterface({ input: createReadStream(s.p), crlfDelay: Infinity });
+    for await (const l of rl) {
+      if (l.includes('"compact_boundary"')) { nastroje.push({ kompakcia: true }); continue; }
+      if (!l.includes('"tool_use"') && !l.includes('"tool_result"')) continue;
+      let j; try { j = JSON.parse(l); } catch { continue; }
+      for (const b of Array.isArray(j.message?.content) ? j.message.content : []) {
+        if (b.type === 'tool_use') nastroje.push({ name: b.name, input: b.input, id: b.id });
+        if (b.type === 'tool_result') vysledky.set(b.tool_use_id, typeof b.content === 'string' ? b.content.length : JSON.stringify(b.content ?? '').length);
+      }
+    }
+    let predtym = new Set(), segment = new Set(), od = -1;
+    nastroje.forEach((t, i) => {
+      if (t.kompakcia) { if (!s.sub) { K.n++; predtym = segment; segment = new Set(); od = 0; } return; }
+      const cmd = String(t.input?.command ?? '');
+      const sub = citane(t.name, t.input).map(norm).filter(Boolean);
+      const jeHladanie = /search\.mjs/.test(cmd) && !/--index|--osnova|--batch/.test(cmd);
+      if (jeHladanie) {
+        P.hladani++;
+        if (nastroje.slice(i + 1, i + 7).some((x) => !x.kompakcia && citane(x.name, x.input).some(doArchivu))) P.otvorene++;
+      } else if (sub.some(doArchivu) || (['Grep', 'Glob'].includes(t.name) && doArchivu(JSON.stringify(t.input ?? '')))) P.priamo++;
+      if (!s.sub && od >= 0 && od < 40) {
+        if (jeHladanie || sub.some(doArchivu)) K.doArchivu++;
+        if (sub.length) {
+          K.citani++;
+          if (sub.some((x) => predtym.has(x))) { K.znova++; K.znovaZnakov += vysledky.get(t.id) ?? 0; }
+        }
+        od++;
+      }
+      for (const x of sub) segment.add(x);
+    });
+  }
+  const p = (a, b) => `${((a / (b || 1)) * 100).toFixed(0)} %`;
+  console.log(`\nKompakcie v hlavných reláciách: ${K.n}.`);
+  if (K.n) {
+    console.log(`  V prvých 40 nástrojoch po nich ${K.citani} čítaní, z toho ${K.znova} (${p(K.znova, K.citani)}) súbor čítaný už pred kompakciou —`);
+    console.log(`  okolo ${(K.znovaZnakov / K.n / 2.6 / 1000).toFixed(1)}k tokenov na kompakciu. Do archívu sa po kompakcii siahlo ${K.doArchivu}-krát.`);
+  }
+  console.log(`Pamäť: search.mjs ${P.hladani}-krát, po ňom sa prepis otvoril v ${p(P.otvorene, P.hladani)}; priamo do archívu ${P.priamo}-krát.`);
+}

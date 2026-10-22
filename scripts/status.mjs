@@ -74,9 +74,11 @@ Topics, each pointing at **exact line ranges in a session transcript**. This is
 not a summary — the text is deliberately absent so it cannot drift from what
 actually happened.
 
-How to use it: read the whole list of headings, pick by heading, open the
-referenced range in \`archive/\`. If a topic isn't here, search the archive
-directly with \`memex/scripts/search.mjs\`.
+How to use it: search first — \`memex/scripts/search.mjs "the question"\`
+matches these topics on their heading and on the text they point at, and
+prints the range to open. Read this list whole only while it is small; at
+thousands of topics it is hundreds of thousands of tokens, and a read stops
+partway while looking complete.
 
 Generated — do not edit by hand.
 

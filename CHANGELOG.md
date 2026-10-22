@@ -1,5 +1,27 @@
 # Zmeny
 
+## 0.27.2 — päť návrhov overených skôr, než sa postavili
+
+Po audite 0.27.0 vzniklo sedem návrhov. Všetky sa najprv zmerali na tom istom
+projekte a štyri z piatich väčších neobstáli — čísla a spúšťače sú v
+ROADMAP: kontext pre podagentov (orientácia je len 12,9 % ich ceny a 87 %
+zadaní už súbor menuje), mapa ponúkaná pri každom zadaní (na skutočných
+zadaniach je správny súbor v prvých troch len v 20,8 %), stopa po dňoch
+namiesto po témach a lacnejšia destilácia (1,5 % ceny).
+
+**`bench.mjs vyzvy`** — mapa na skutočných zadaniach z archívu. MRR **0,183**
+proti 0,735 na správach commitov toho istého repozitára. Benchmark z
+commitov mapu preceňuje zhruba štvornásobne.
+
+**`kontext.mjs --kompakcie`** — čo kompakcia stojí v práci: 43 % čítaní v
+prvých štyridsiatich nástrojoch po nej je súbor čítaný už pred ňou, okolo
+7,4 tisíca tokenov na kompakciu. Simulácia stropu počíta s nameranými 10k.
+Hľadanie v pamäti sa za dva a pol mesiaca zavolalo 20-krát, priamo do
+archívu sa siahlo 4 913-krát.
+
+**Rozcestník nehovorí, že sa má čítať celý.** Jeho hlavička to radila aj
+pri troch megabajtoch.
+
 ## 0.27.1 — začiatok relácie bez čítania celej stopy
 
 Hook na začiatku relácie čítal všetkých 10 540 záznamov stopy, aby zistil,
