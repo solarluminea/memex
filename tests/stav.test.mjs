@@ -49,3 +49,25 @@ test('Po kompakcii hook ukáže archív tejto relácie a ako v ňom hľadať', (
   assert.match(v.stdout, /search\.mjs" "<words>"/);
   assert.equal(beh('ina-relacia').stdout, '', 'relácia bez archívu nedostane nič');
 });
+
+/*
+  Pokrytie stopy z indexu musí sedieť s pokrytím zo súborov — a keď do
+  stopy pribudne záznam, ktorý index ešte nepozná, číta sa stopa.
+*/
+test('Hook na začiatku relácie pozná nepokryté prepisy z indexu aj zo súborov rovnako', () => {
+  const p = mkdtempSync(join(tmpdir(), 'memex-pokrytie-'));
+  const archiv = join(p, 'docs/archiv'), stopa = join(p, 'docs/stopa');
+  mkdirSync(archiv, { recursive: true }); mkdirSync(stopa, { recursive: true });
+  writeFileSync(join(p, 'memex.json'), JSON.stringify({ archive: 'docs/archiv', trail: 'docs/stopa', trailIndex: 'docs/STOPA.md', distilAfter: 1 }));
+  for (const id of ['a', 'b', 'c']) writeFileSync(join(archiv, `${id}.md`), `---\nsession: ${id}\ndate: 2026-10-0${id === 'a' ? 1 : 2}\n---\n\nText ${id}.\n`);
+  writeFileSync(join(stopa, '2026-10-01-a.md'), '# 2026-10-01 · Téma a\n\n- [a](../archiv/a.md#L5-L5)\n');
+  const env = { ...process.env, MEMEX_PROJECT_ROOT: p, MEMEX_PROJECT: 'neexistuje', USERPROFILE: p, HOME: p };
+  const hook = () => spawnSync(process.execPath, [resolve('scripts/dobehni.mjs')], { cwd: p, env, encoding: 'utf8', input: '{"session_id":"x"}' }).stdout;
+  const bezIndexu = hook();
+  assert.match(bezIndexu, /2 transcripts have no trail entry/);
+  spawnSync(process.execPath, [resolve('scripts/search.mjs'), '--index'], { cwd: p, env, encoding: 'utf8' });
+  assert.match(hook(), /2 transcripts have no trail entry/);
+  // Nový záznam stopy, index o ňom ešte nevie: hook musí čítať súbory.
+  writeFileSync(join(stopa, '2026-10-02-b.md'), '# 2026-10-02 · Téma b\n\n- [b](../archiv/b.md#L5-L5)\n');
+  assert.match(hook(), /1 transcripts have no trail entry/);
+});

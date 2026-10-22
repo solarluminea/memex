@@ -190,6 +190,28 @@ function temyZoSuboruStopy(f, t) {
   }));
 }
 
+/*
+  Témy stopy z indexu, keď ich pozná všetky — inak zo súborov.
+
+  `--file` čítal pri každom dotaze všetkých 10 540 záznamov stopy (3,8 s s
+  teplou cache disku), hoci index ich má v tabuľke. Index sa použije, keď je
+  novší než priečinok stopy; pridaný záznam mení čas priečinka.
+*/
+function temyStopyRychlo() {
+  try {
+    if (existsSync(INDEX) && existsSync(CESTY.trail) && statSync(CESTY.trail).mtimeMs <= statSync(INDEX).mtimeMs) {
+      const db = new DatabaseSync(INDEX);
+      try {
+        if (sediSchema(db)) {
+          return db.prepare("SELECT druh, den, subor, od, doo, nadpis FROM temy WHERE druh = 'trail'").all()
+            .map((x) => ({ ...x, od: Number(x.od), doo: Number(x.doo) }));
+        }
+      } finally { db.close(); }
+    }
+  } catch { /* zo súborov */ }
+  return temyZoStopy();
+}
+
 function temyZoStopy() {
   if (!existsSync(CESTY.trail)) return [];
   const out = [];
@@ -698,7 +720,7 @@ function podlaSuboru(cesta, n = 8) {
     tvar. Keď téma nie je, riadok nie je; nič sa nedopĺňa dohadom.
   */
   const OKNO = 300;
-  const temy = temyZoStopy();
+  const temy = temyStopyRychlo();
   const podlaPrepisu = new Map();
   for (const t of temy) {
     let z = podlaPrepisu.get(t.subor);

@@ -21,7 +21,7 @@
  * Lacné zámerne: číta časy zmeny súborov a dva počty z hotového indexu.
  * Žiadne čítanie prepisov, žiadne prehľadávanie.
  */
-import { readdirSync, existsSync, statSync, readFileSync } from 'node:fs';
+import { readdirSync, existsSync, statSync, readFileSync, openSync, readSync, closeSync } from 'node:fs';
 import { join, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { kde, prepisyVZdroji, hookVstup } from './kde.mjs';
@@ -39,6 +39,17 @@ const CESTY = kde();
 */
 const VSTUP = hookVstup();
 const TATO_RELACIA = typeof VSTUP.session_id === 'string' ? VSTUP.session_id : null;
+
+/** Prvých 300 bajtov súboru — frontmatter, nič viac. */
+function zaciatokSuboru(cesta) {
+  try {
+    const fd = openSync(cesta, 'r');
+    try {
+      const b = Buffer.alloc(300);
+      return b.toString('utf8', 0, readSync(fd, b, 0, 300, 0));
+    } finally { closeSync(fd); }
+  } catch { return ''; }
+}
 
 /** Prepisy v archíve. Bodka na začiatku je pracovný súbor, nie relácia. */
 const prepisy = existsSync(CESTY.archive)
@@ -139,13 +150,29 @@ if (existsSync(STAV)) {
   sa nedá nájsť a nič iné to nepovie — hlásenie „built" bolo dvakrát pravdivé
   a zároveň bezcenné.
 */
+/*
+  Ktoré prepisy stopa pokrýva — z indexu, nie z desaťtisíc súborov.
+
+  Hook čítal pri každom otvorení okna všetky záznamy stopy, aby zistil, na
+  ktoré prepisy ukazujú. Pri 10 540 záznamoch to bolo 2,8 s s teplou cache
+  disku a 12,7 s po štarte stroja — z tridsaťsekundového limitu hooku. Index
+  tie ukazovatele už má. Použije sa, keď je novší než priečinok stopy:
+  pridaný alebo zmazaný záznam mení čas priečinka, takže index, ktorý ho
+  ešte nepozná, je starší a číta sa po starom.
+*/
+let pokryteZIndexu = null;
 if (existsSync(CESTY.index)) {
   try {
     const { DatabaseSync } = await import('node:sqlite');
     const db = new DatabaseSync(CESTY.index);
     const suborov = db.prepare('SELECT count(DISTINCT subor) c FROM useky').get().c;
-    db.close();
     const kedy = statSync(CESTY.index).mtimeMs;
+    try {
+      if (existsSync(CESTY.trail) && statSync(CESTY.trail).mtimeMs <= kedy) {
+        pokryteZIndexu = new Set(db.prepare("SELECT DISTINCT subor FROM temy WHERE druh = 'trail'").all().map((r) => r.subor));
+      }
+    } catch { /* index spred úrovne tém — prečíta sa stopa */ }
+    db.close();
     const novsie = prepisy.filter((f) => statSync(join(CESTY.archive, f)).mtimeMs > kedy).length;
     if (suborov < prepisy.length) {
       zaostava.push(`the index is missing ${prepisy.length - suborov} transcripts — memex/scripts/search.mjs --index`);
@@ -171,10 +198,13 @@ if (existsSync(CESTY.index)) {
 const PRAH = Number(CESTY.volby.distilAfter ?? 10);
 let slepota = null;
 if (existsSync(CESTY.trail)) {
-  const pokryte = new Set();
-  for (const f of readdirSync(CESTY.trail).filter((x) => x.endsWith('.md'))) {
-    const t = readFileSync(join(CESTY.trail, f), 'utf8');
-    for (const m of t.matchAll(/\]\(([^)#]+)#L\d+/g)) pokryte.add(m[1].split('/').pop());
+  let pokryte = pokryteZIndexu;
+  if (!pokryte) {
+    pokryte = new Set();
+    for (const f of readdirSync(CESTY.trail).filter((x) => x.endsWith('.md'))) {
+      const t = readFileSync(join(CESTY.trail, f), 'utf8');
+      for (const m of t.matchAll(/\]\(([^)#]+)#L\d+/g)) pokryte.add(m[1].split('/').pop());
+    }
   }
   const bez = prepisy.filter((f) => !pokryte.has(f));
   if (bez.length >= PRAH) {
@@ -187,8 +217,8 @@ if (existsSync(CESTY.trail)) {
     */
     const dni = [];
     for (const f of bez) {
-      const d = /^(?:date|den):\s*(\d{4}-\d{2}-\d{2})/m
-        .exec(readFileSync(join(CESTY.archive, f), 'utf8').slice(0, 300));
+      // Dátum je v prvých riadkoch; celý prepis má aj sedem megabajtov.
+      const d = /^(?:date|den):\s*(\d{4}-\d{2}-\d{2})/m.exec(zaciatokSuboru(join(CESTY.archive, f)));
       if (d) dni.push(d[1]);
     }
     dni.sort();

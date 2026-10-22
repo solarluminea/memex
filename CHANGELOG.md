@@ -1,5 +1,18 @@
 # Zmeny
 
+## 0.27.1 — začiatok relácie bez čítania celej stopy
+
+Hook na začiatku relácie čítal všetkých 10 540 záznamov stopy, aby zistil,
+ktoré prepisy ešte nemajú tému — 2,8 s s teplou cache disku, 12,7 s po
+štarte stroja, z limitu 30 s. Index tie ukazovatele má; použije sa, keď je
+novší než priečinok stopy. **2,8 s → 0,4 s.** To isté pri `search.mjs
+--file`: 3,8 s → 1,2 s. Dátum nepokrytého prepisu sa číta z prvých 300
+bajtov, nie z celého súboru.
+
+Prvý beh 0.27 na skutočnom projekte (`status.mjs --oprav`, 35 s): 5 412
+ťahov zaseknutej relácie späť v archíve, všetkých 66 relácií zarchivovaných,
+index nad 173 prepismi.
+
 ## 0.27.0 — pamäť, ktorá prerástla vlastné merania
 
 Všetko doteraz sa meralo na 260 témach a 16 MB archívu. Na tom istom projekte
