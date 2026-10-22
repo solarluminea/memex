@@ -25,16 +25,67 @@
   zhodovať a pripíše sa druhýkrát. Týka sa to len archívov spred 0.20.0 —
   novšie ťahy majú značku a obsah sa im neporovnáva.
 */
+/*
+  Začiatok tajomstva: nie písmeno ani číslica pred ním — alebo doslovné `\n`.
+
+  `\b` tu nestačilo. Výstup nástroja býva JSON s escapovanými koncami riadkov,
+  takže pred kľúčom stojí doslovné `\n` a medzi `n` a `g` z `ghp_` žiadna
+  hranica slova nie je. Kľúč na začiatku riadku v takom texte prešiel celý.
+*/
+const Z = String.raw`(?<=^|[^A-Za-z0-9_]|\\[nrt])`;
+const v = (telo, prepinace = 'g') => new RegExp(Z + telo, prepinace);
+
+/*
+  Zoznam rozšírený v 0.27.0 o formáty, ktoré sa na tomto stroji naozaj
+  vyskytujú: archivuje sa aj Codex, a s ním kľúče OpenAI. Na projekte, kde
+  memex beží, zablokovala commit kontrola tajomstiev práve kvôli kľúču OpenAI
+  v súboroch relácií — vtedy mimo archívu, ale tou istou cestou by prešiel aj
+  doň. Vzor `sk-ant` musí ísť pred všeobecným `sk-`.
+*/
 const TAJOMSTVA = [
-  [/\bsk-ant-[A-Za-z0-9_-]{20,}/g, 'sk-ant'],
-  [/\bgh[pousr]_[A-Za-z0-9]{20,}/g, 'github'],
-  [/\bAKIA[0-9A-Z]{16}\b/g, 'aws'],
-  [/\bxox[baprs]-[A-Za-z0-9-]{10,}/g, 'slack'],
-  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{5,}/g, 'jwt'],
-  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, 'private key'],
-  [/\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/g, 'bearer'],
+  [v(String.raw`sk-ant-[A-Za-z0-9_-]{20,}`), 'sk-ant'],
+  [v(String.raw`sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}`), 'openai'],
+  [v(String.raw`sk-[A-Za-z0-9]{32,}`), 'openai'],
+  [v(String.raw`gh[pousr]_[A-Za-z0-9]{20,}`), 'github'],
+  [v(String.raw`github_pat_[A-Za-z0-9_]{20,}`), 'github'],
+  [v(String.raw`(?:AKIA|ASIA)[0-9A-Z]{16}(?![0-9A-Z])`), 'aws'],
+  [v(String.raw`AIza[0-9A-Za-z_-]{35}`), 'google'],
+  [v(String.raw`(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}`), 'stripe'],
+  [v(String.raw`xox[baprs]-[A-Za-z0-9-]{10,}`), 'slack'],
+  [/https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/]+/g, 'slack webhook'],
+  [v(String.raw`eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{5,}`), 'jwt'],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g, 'private key'],
+  [v(String.raw`[Bb]earer\s+[A-Za-z0-9._~+/=-]{20,}`), 'bearer'],
+  // Heslo v adrese: `postgres://meno:heslo@server`. Meno zostáva, heslo nie.
+  [/(?<=[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@/]{3,}(?=@)/gi, 'password'],
 ];
-export const redakcia = (t) => TAJOMSTVA.reduce((s, [vzor, meno]) => s.replace(vzor, `[redacted:${meno}]`), t);
+/*
+  `NIECO_TOKEN=hodnota` — premenná, ktorej meno hovorí, že je tajná.
+
+  Komentár vyššie odjakživa uvádzal `export TOKEN=…` ako dôvod redakcie, a
+  pravidlo naň neexistovalo. Meno zostáva, aby bolo vidieť, čo sa nastavovalo;
+  hodnota od ôsmich znakov, aby `TOKEN_LIMIT=500` zostalo čitateľné.
+*/
+const PREMENNA = /\b([A-Z][A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY)[A-Z0-9_]*)(\s*[=:]\s*)(["']?)[^\s"'$]{8,}\3/g;
+
+export const redakcia = (t) => TAJOMSTVA
+  .reduce((s, [vzor, meno]) => s.replace(vzor, `[redacted:${meno}]`), String(t))
+  .replace(PREMENNA, (_, meno, rovna, uvodzovka) => `${meno}${rovna}${uvodzovka}[redacted:env]${uvodzovka}`);
+
+/*
+  Prvý identifikátor zo vstupu volania — `[Tool: Agent subagent_type=…]`.
+
+  Bol v `archive.mjs` aj v `codex.mjs`, dvakrát rovnako a dvakrát bez
+  redakcie: `{token: "ghp_…"}` sa archivovalo ako `[Tool: prihlas token=ghp_…]`.
+  Hodnota bez medzier do šesťdesiatich znakov je presne tvar kľúča.
+*/
+export function prvyArgument(i) {
+  for (const [k, v] of Object.entries(i ?? {})) {
+    if (typeof v === 'number' || typeof v === 'boolean') return ` ${k}=${v}`;
+    if (typeof v === 'string' && v.length <= 60 && v.length > 0 && !/\s/.test(v)) return redakcia(` ${k}=${v}`);
+  }
+  return '';
+}
 
 /*
   The one line of a tool result worth keeping.
@@ -60,7 +111,9 @@ export function failureLine(result) {
   const text = typeof result === 'string' ? result : '';
   if (!text) return null;
   for (const l of text.split('\n')) {
-    if (FAILURE.test(l)) return l.trim().slice(0, 160);
+    // Redakcia pred orezaním: `curl -H "Authorization: Bearer …"` v chybe
+    // príkazu sa do archívu zapisovalo celé, hoci ten istý kľúč v príkaze nie.
+    if (FAILURE.test(l)) return redakcia(l.trim()).slice(0, 160);
   }
   return null;
 }

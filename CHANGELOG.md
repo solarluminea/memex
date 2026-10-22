@@ -1,5 +1,95 @@
 # Zmeny
 
+## 0.27.0 — pamäť, ktorá prerástla vlastné merania
+
+Všetko doteraz sa meralo na 260 témach a 16 MB archívu. Na tom istom projekte
+je dnes stopa **10 536 tém**, archív 170 prepisov a rozcestník 3,1 MB — okolo
+milióna tokenov. Táto verzia je to, čo sa pri takej veľkosti ukázalo.
+
+**Archív najdlhšej relácie stál týždeň.** V zdrojovom prepise bol po páde
+stroja 15. 10. riadok z 252 025 nulových bajtov. Archivátor ho bral ako
+nedopísaný riadok, ktorý „skúsi nabudúce", a pri každom behu sa na ňom
+zastavil — z relácie, ktorá nesie 68 % ceny celého projektu, neprišlo do
+pamäte 78 tisíc riadkov, a kontrola stavu to nevidela, lebo zastavený beh si
+nezapísal veľkosť zdroja. Ukončený neplatný riadok sa teraz preskočí a
+nahlási; čaká sa len na posledný, nedopísaný. Na kópii archívu: **5 379
+ťahov späť**, prepis 125 → 167 tisíc riadkov.
+
+**Archivátor číta len prírastok.** Doteraz prešiel pri každom behu všetky
+zdrojové prepisy celé — 4,1 GB, z toho jeden 1,5 GB — aj keď nebolo nič
+nové. Stav si pamätá bajt za posledným potvrdeným riadkom a nezmenenú reláciu
+neotvára vôbec: **8,3 s → 0,18 s**, s jednou rastúcou reláciou 0,43 s.
+
+**Prírastkový index.** Spúšťač z ROADMAP padol na oboch číslach (170
+prepisov, 5–9 s). Index si pamätá, ktoré prepisy a záznamy stopy pozná;
+dopísaný prepis sa preindexuje od posledného úseku, prepísaný celý, a témy
+stopy len tie, ktorých rozsah siaha do zmenenej časti. Jedna transakcia nad
+živým indexom. Na kópii archívu **7,7 s → 1,5 s**, bez zmeny 0,9 s. Celá
+stavba: `--index --full`. Testy porovnávajú odpovede prírastku a stavby od
+nuly.
+
+**Pamäť drží to, čo kompakcia zahodí.** Hook `PreCompact` pred kompakciou
+zarchivuje a zaindexuje reláciu; `SessionStart` s matcherom `compact` po nej
+povie dvomi vetami, kde je zvyšok a ako v ňom hľadať. Je to podmienka toho,
+aby sa dalo kompaktovať skôr (pozri `kontext.mjs` nižšie).
+
+**Telemetria verzie 3** počíta podagentov, váženú cenu na zásah, priemerný
+kontext a podiel volaní nad 200k. Staršie riadky sa prepočítajú.
+
+**Téma stopy sa hľadá aj v texte, na ktorý ukazuje.** Dovtedy len v nadpise,
+takže otázka položená inými slovami než nadpis tému nenašla nikdy, a jediná
+záchrana bola prečítať celý rozcestník — dnes milión tokenov. K téme sa teraz
+zaindexuje do 2 000 znakov z jej rozsahu; hľadá sa v nich, nevypisujú sa. Ten
+istý princíp, ktorý mape dal +53 % MRR. Namerané novým `bench.mjs parafraza`
+na 537 témach, dotaz zo slov rozsahu, ktoré v nadpise nie sú: správna téma
+medzi prvými štyrmi **2,4 % → 80,8 %**, MRR 0,019 → 0,688, na oboch
+polovicach. Dotaz zo slov nadpisu 0,993 → 0,988. Index narastie o 30 %.
+
+**Rada „prečítaj celý rozcestník" platí len pre malý.** Nad 120 kB hľadanie
+povie veľkosť v tokenoch a odporučí iné slová alebo `--n 20`.
+
+**Téma s dvoma ukazovateľmi je jeden riadok.** Vypisovala sa dvakrát s tým
+istým nadpisom; rozsahy sa teraz pripíšu k sebe.
+
+**Krátke slovo sa hľadá celé, nie ako predpona.** `"z"*` zahrnulo každé slovo
+na „z". Poradie sa nezmenilo (MRR 0,832 → 0,833 na 600 témach), dotaz je
+**3,8× rýchlejší** (391 → 104 ms) a benchmark pamäte beží 83 s namiesto 242.
+
+**Mapa si pamätá rozbor súborov.** Jedno `find` stavalo celú mapu nanovo — na
+projekte s 2 593 modulmi **12 až 14 sekúnd** na dotaz. Rozbor každého súboru
+sa ukladá do dočasného priečinka systému a platí, kým sa súbor nezmení; čo
+závisí od celého projektu, sa skladá zakaždým. Opakovaný dotaz 2,0 s, výstup
+bajt na bajt rovnaký. Mapa sa podľa telemetrie použila v 8 zo 168 relácií.
+
+**`kontext.mjs` — kam idú tokeny.** Telemetria merala čerstvé tokeny na zásah,
+čo je štvrtina ceny. Namerané na 68 tisícoch volaní: čítanie z cache **71 %**
+ceny, priemerný kontext 257k tokenov, **74 % ceny padá na volania s kontextom
+nad 200k**, vypršaná cache 15,5 %, podagenti 56 %. Simulácia nad tými istými
+volaniami hovorí, že kompakcia pri 200k by stála 60–66 % dnešnej ceny.
+
+**Bezpečnosť.** Riadok zlyhania a prvý argument volania šli do archívu bez
+redakcie — `Error: … Bearer …` sa zapísal celý. Redakcia pozná kľúče OpenAI,
+GitHub `github_pat_`, Google, Stripe, Slack webhooky, PGP, heslá v adresách a
+premenné typu `NIECO_TOKEN=`, a zachytí kľúč aj za doslovným `\n` z JSON-u.
+Server MCP v režime HTTP padal na `GET //[` ešte pred kontrolou tokenu a na
+odpojenom klientovi; `memex_read` s `to: -1` obišiel limit 400 riadkov,
+sieťová cesta otvorila spojenie SMB von a spojka v archíve čítala mimo neho;
+otázka `--index` prestavala index; notifikácia `tools/call` sa vykonala;
+pokazený `memex.json` zabil celý server.
+
+**Zámok archívu.** Na Windowse `kill(pid, 0)` vracia pre mŕtvy proces aj
+EPERM a archivácia siedmich relácií padala, kým zámok nezmazal človek. Zámok
+starší než pol hodiny sa obnoví; zvyšok obnovy starší než minútu neblokuje.
+
+**Zvyšky stavby indexu.** Kontrola stavu ich hlási a `--oprav` ich zmaže.
+Na projekte s nainštalovanou 0.23.0 ich bolo **165 MB**, päťkrát viac než
+archív — upratovanie z 0.21.0 sa tam nikdy nedostalo.
+
+Zamietnuté meraním: **skóre úseku dvíhané susedmi** (aby krátky úsek mal
+presnosť dlhého) — na celých nadpisoch +0,006, na štvorslovných dotazoch
+**−0,03 až −0,10**. **Vyhodiť krátke slová úplne** — 0,813 proti 0,832, lebo
+čísla ako „35" sú v otázke často to najvzácnejšie.
+
 ## 0.26.0 — Codex a ChatGPT
 
 Memex doteraz rozumel len Claude Code. Pribudol archív relácií Codexu

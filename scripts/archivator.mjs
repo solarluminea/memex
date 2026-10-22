@@ -1,7 +1,6 @@
 /** Bezpečný zápis archívu: pôvodné riadky zostávajú, opakovania rozlišuje identita udalosti. */
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, openSync, closeSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, openSync, closeSync, unlinkSync, readSync } from 'node:fs';
 import { createReadStream } from 'node:fs';
-import { createInterface } from 'node:readline';
 import { join, basename } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -36,6 +35,21 @@ function prepis(text) {
   }));
 }
 
+/*
+  Ako starý môže byť zámok, kým sa mu prestane veriť.
+
+  `process.kill(pid, 0)` na Windowse nerozlišuje spoľahlivo: pre proces, ktorý
+  už neexistuje, vie vrátiť EPERM namiesto ESRCH, a PID sa po čase pridelí
+  inému procesu. Na skutočnom projekte zostal zámok s PID z predošlého dňa,
+  tasklist ten proces nepoznal, `kill` vracal EPERM — a archivácia siedmich
+  relácií padala, kým zámok nezmazal človek.
+
+  Archivácia trvá sekundy, aj pri prepise s pol druha gigabajta minútu. Zámok
+  starší než pol hodiny teda nedrží nikto, kto ešte pracuje.
+*/
+const ZAMOK_STARY_MS = 30 * 60_000;
+const vekSuboru = (c) => { try { return Date.now() - statSync(c).mtimeMs; } catch { return 0; } };
+
 function zamkni(cesta) {
   const značka = JSON.stringify({ pid: process.pid, token: randomUUID() });
   for (let pokus = 0; pokus < 2; pokus++) {
@@ -49,23 +63,61 @@ function zamkni(cesta) {
       let vlastník;
       try { vlastník = JSON.parse(readFileSync(cesta, 'utf8')); } catch { throw new Error(`Nečitateľný zámok archívu: ${cesta}`); }
       if (!Number.isInteger(vlastník.pid) || vlastník.pid <= 0) throw new Error(`Neplatný vlastník zámku: ${cesta}`);
+      let mrtvy = false;
       try { process.kill(vlastník.pid, 0); }
       catch (chyba) {
-        if (chyba.code === 'ESRCH' && pokus === 0) {
-          // Dva procesy nesmú pri obnove odstrániť čerstvý zámok toho druhého.
-          const obnova = `${cesta}.obnova`;
-          const fd = openSync(obnova, 'wx');
-          try {
-            const aktuálny = existsSync(cesta) ? JSON.parse(readFileSync(cesta, 'utf8')) : null;
-            if (aktuálny?.pid === vlastník.pid && aktuálny?.token === vlastník.token) unlinkSync(cesta);
-          } finally { closeSync(fd); unlinkSync(obnova); }
-          continue;
-        }
-        throw chyba;
+        if (chyba.code === 'ESRCH') mrtvy = true;
+        else if (chyba.code !== 'EPERM') throw chyba;
       }
-      throw new Error(`Archív práve spracúva proces ${vlastník.pid}. Skúste to po jeho dokončení.`);
+      // Živý alebo nejasný vlastník sa rešpektuje, kým je zámok čerstvý.
+      if (!mrtvy && vekSuboru(cesta) < ZAMOK_STARY_MS) {
+        throw new Error(`Archív práve spracúva proces ${vlastník.pid}. Skúste to po jeho dokončení.`);
+      }
+      if (pokus > 0) throw new Error(`Zámok archívu sa nepodarilo obnoviť: ${cesta}`);
+      // Dva procesy nesmú pri obnove odstrániť čerstvý zámok toho druhého.
+      const obnova = `${cesta}.obnova`;
+      // Obnova trvá milisekundy; jej zvyšok po spadnutom behu by inak blokoval navždy.
+      if (existsSync(obnova) && vekSuboru(obnova) > 60_000) unlinkSync(obnova);
+      const fd = openSync(obnova, 'wx');
+      try {
+        const aktuálny = existsSync(cesta) ? JSON.parse(readFileSync(cesta, 'utf8')) : null;
+        if (aktuálny?.pid === vlastník.pid && aktuálny?.token === vlastník.token) unlinkSync(cesta);
+      } finally { closeSync(fd); unlinkSync(obnova); }
     }
   }
+}
+
+/*
+  Riadky zdroja s bajtom, na ktorom končia — a s tým, či sú dopísané.
+
+  `readline` nehovorí ani jedno. Bez polohy v bajtoch sa každý beh musel
+  prečítať od začiatku: na skutočnom projekte 4,1 GB prepisov pri každom
+  zatvorení okna, 8,3 s aj vtedy, keď nebolo nič nové, a jediná relácia mala
+  1,5 GB. A bez vedomia, či je riadok ukončený, sa nedalo rozlíšiť riadok,
+  ktorý sa práve zapisuje, od riadku, ktorý je pokazený navždy.
+*/
+async function* riadkyZdroja(cesta, zaciatok) {
+  let zvysok = Buffer.alloc(0), poz = zaciatok;
+  for await (const kus of createReadStream(cesta, { start: zaciatok })) {
+    const buf = zvysok.length ? Buffer.concat([zvysok, kus]) : kus;
+    let od = 0, i;
+    while ((i = buf.indexOf(10, od)) !== -1) {
+      const koniec = i > od && buf[i - 1] === 13 ? i - 1 : i;
+      poz += i + 1 - od;
+      yield { r: buf.toString('utf8', od, koniec), bajt: poz, ukonceny: true };
+      od = i + 1;
+    }
+    zvysok = buf.subarray(od);
+  }
+  if (zvysok.length) yield { r: zvysok.toString('utf8'), bajt: poz + zvysok.length, ukonceny: false };
+}
+
+function bajtNa(cesta, poz) {
+  const fd = openSync(cesta, 'r');
+  try {
+    const b = Buffer.alloc(1);
+    return readSync(fd, b, 0, 1, poz) === 1 ? b[0] : -1;
+  } finally { closeSync(fd); }
 }
 
 function atomicky(cesta, text) {
@@ -97,6 +149,18 @@ export async function archivuj({ zdroj, súbory: zoznam, kľúčPre, cieľ, proj
     for (const cesta of súbory) {
       const súbor = basename(cesta), kľúč = kľúčPre ? kľúčPre(cesta) : basename(súbor, '.jsonl');
       const výstup = join(cieľ, `${kľúč}.md`);
+      /*
+        Relácia, na ktorej sa od posledného behu nič nezmenilo, sa nečíta.
+
+        Zdroj má tú istú veľkosť, ktorú archivátor videl pri poslednom celom
+        prečítaní, a prepis tú, ktorú vtedy zapísal. Väčšina relácií je pri
+        zatvorení okna presne taká — mení sa jedna, zvyšné šesťdesiat nie.
+      */
+      const s0 = stav[kľúč];
+      let veľkosťZdroja = 0;
+      try { veľkosťZdroja = statSync(cesta).size; } catch { /* zmizol — prejde sa bežnou cestou a nahlási */ }
+      if (Number.isFinite(s0?.offset) && s0.bytes === veľkosťZdroja && s0.offset === veľkosťZdroja
+        && existsSync(výstup) && statSync(výstup).size === s0.mdBytes) continue;
       const pôvodný = existsSync(výstup) ? readFileSync(výstup, 'utf8') : '';
       const záznamy = prepis(pôvodný);
       if (pôvodný && (!pôvodný.startsWith(`---\nsession: ${kľúč}\n`) && !pôvodný.startsWith(`---\r\nsession: ${kľúč}\r\n`))) {
@@ -145,10 +209,36 @@ export async function archivuj({ zdroj, súbory: zoznam, kľúčPre, cieľ, proj
         poradie by rozdiel zamlčalo.
       */
       const bajtovPred = statSync(cesta).size;
-      const čítačka = createInterface({ input: createReadStream(cesta), crlfDelay: Infinity });
-      for await (const r of čítačka) {
+      /*
+        Čítanie od miesta, kde sa minule skončilo.
+
+        Platí len pri zhodnom stave, úplne označkovanom prepise a keď bajt pred
+        uloženou polohou je naozaj koniec riadka. Inak sa číta od začiatku ako
+        doteraz — pomalšie, ale bez predpokladov.
+      */
+      let začiatok = 0;
+      if (od && !staré.length && Number.isFinite(s0?.offset) && s0.offset > 0 && s0.offset <= bajtovPred) {
+        try { if (bajtNa(cesta, s0.offset - 1) === 10) začiatok = s0.offset; } catch { /* od začiatku */ }
+      }
+      if (začiatok) { riadok = od; potvrdené = od; }
+      let potvrdenýBajt = začiatok, poškodených = 0, prvýPoškodený = 0;
+      for await (const { r, bajt, ukonceny } of riadkyZdroja(cesta, začiatok)) {
         riadok++;
-        if (!r.trim()) { potvrdené = riadok; continue; }
+        if (!r.trim()) { if (ukonceny) { potvrdené = riadok; potvrdenýBajt = bajt; } continue; }
+        /*
+          Pokazený riadok, ktorý sa už nikdy neopraví.
+
+          Neplatný JSON na konci súboru je riadok, ktorý sa práve zapisuje, a
+          skúsi sa nabudúce. Ukončený neplatný riadok — s ďalšími za sebou — sa
+          už nedopíše nikdy. Doteraz sa medzi nimi nerozlišovalo a archív na
+          takom riadku zastal **natrvalo**: na skutočnom projekte 252 025
+          nulových bajtov po páde stroja 15. 10. a odvtedy z najdlhšej relácie
+          neprišlo do archívu nič — 78 tisíc riadkov, týždeň práce. Hlásenie
+          „ďalší beh skúsi tento riadok znova" bolo pravdivé a bezcenné.
+        */
+        if (ukonceny && /^\0+$/.test(r)) {
+          poškodených++; prvýPoškodený ||= riadok; potvrdené = riadok; potvrdenýBajt = bajt; continue;
+        }
         /*
           Už spracovaný riadok sa neparsuje, ak je prepis celý označkovaný.
 
@@ -157,20 +247,27 @@ export async function archivuj({ zdroj, súbory: zoznam, kľúčPre, cieľ, proj
           `videné` poskladané z nich a `JSON.parse` nad celým JSONL pri každom
           behu hooku je práca navyše. Rastie s dĺžkou relácie, nie s prírastkom.
         */
-        if (riadok <= od && !staré.length) { potvrdené = riadok; continue; }
+        /*
+          Potvrdzuje sa len ukončený riadok. Posledný riadok bez konca sa
+          spracuje hneď, ale poloha za neho nejde: ďalší beh ho prečíta znova
+          a značka udalosti v prepise zabráni tomu, aby sa zapísal dvakrát.
+        */
+        const potvrď = () => { if (ukonceny) { potvrdené = riadok; potvrdenýBajt = bajt; } };
+        if (riadok <= od && !staré.length) { potvrď(); continue; }
         let j;
         try { j = JSON.parse(r); }
         catch {
-          console.error(`! ${súbor}:${riadok}: neúplný alebo neplatný JSON; ďalší beh skúsi tento riadok znova.`);
+          if (ukonceny) { poškodených++; prvýPoškodený ||= riadok; potvrď(); continue; }
+          console.error(`! ${súbor}:${riadok}: neúplný JSON na konci súboru; ďalší beh skúsi tento riadok znova.`);
           chyba = true; break;
         }
         if (riadok <= od) {
           // Aj staré prepisy bez značiek môžu mať neskôr v JSONL zopakované udalosti.
           if (j.uuid) videné.add(identita(j, riadok));
-          potvrdené = riadok; continue;
+          potvrď(); continue;
         }
         const text = preved(j, zlyhania);
-        potvrdené = riadok;
+        potvrď();
         if (!text) continue;
         if (!deň && j.timestamp) deň = j.timestamp.slice(0, 10);
         // Bez uuid sa neodhadujú duplicity podľa podobnosti zredukovaného textu.
@@ -233,8 +330,16 @@ export async function archivuj({ zdroj, súbory: zoznam, kľúčPre, cieľ, proj
       // Poradie je podstatné: najprv celý prepis, potom poloha. Staré riadky sa nemenia.
       // `bytes` sa zapíše len po celom prečítaní: po prerušenom čítaní by tvrdilo,
       // že je pokryté aj to, čo sa nedočítalo.
-      stav[kľúč] = { lines: potvrdené, day: dátum, hash: odtlačok(hotové), ...(chyba ? {} : { bytes: bajtovPred }) };
+      // `offset` je bajt za posledným potvrdeným riadkom, `mdBytes` veľkosť zapísaného
+      // prepisu — z oboch sa nabudúce pozná relácia, ktorú netreba čítať.
+      stav[kľúč] = {
+        lines: potvrdené, day: dátum, hash: odtlačok(hotové), offset: potvrdenýBajt,
+        mdBytes: Buffer.byteLength(hotové, 'utf8'), ...(chyba ? {} : { bytes: bajtovPred }),
+      };
       atomicky(stavCesta, JSON.stringify(stav, null, 2) + '\n');
+      if (poškodených) {
+        console.error(`! ${súbor}: ${poškodených} pokazených riadkov preskočených (prvý ${prvýPoškodený}) — ukončené, ale nie JSON, napr. nulové bajty po páde stroja.`);
+      }
       nové += prírastky.length; znakov += pridané.length; if (pridané) upravených++;
       if (chyba) process.exitCode = 1;
     }

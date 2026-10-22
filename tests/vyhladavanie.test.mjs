@@ -61,3 +61,69 @@ test('Rovnaký celý úsek sa vráti len raz', () => {
   const f = príprava(); for (const n of ['a', 'b']) writeFileSync(join(f.archív, n + '.md'), 'Totožné rozhodnutie.'); f.beh(['--index']);
   assert.equal((f.beh(['rozhodnutie']).stdout.match(/\.md:\d+-\d+/g) || []).length, 1);
 });
+
+/*
+  Prírastkový index musí dať to isté, čo stavba od nuly.
+
+  Zmenený prepis sa preindexuje, zmazaný zmizne, nový záznam stopy pribudne
+  a skrytý text témy sa obnoví, keď sa zmení prepis, do ktorého ukazuje.
+  Porovnáva sa výstup hľadania, nie súbor — poradie riadkov v tabuľkách sa
+  líšiť smie, odpoveď nie.
+*/
+test('Prírastkový index odpovedá rovnako ako stavba od nuly', () => {
+  const f = príprava();
+  const stopa = join(f.p, '.memex/trail'); mkdirSync(stopa, { recursive: true });
+  const env = { MEMEX_TRAIL: stopa, MEMEX_TRAIL_INDEX: join(f.p, '.memex/TRAIL.md') };
+  const beh = (args) => spawnSync(process.execPath, [resolve('scripts/search.mjs'), ...args], {
+    cwd: f.p, encoding: 'utf8',
+    env: { ...process.env, MEMEX_PROJECT_ROOT: f.p, MEMEX_ARCHIVE: f.archív, MEMEX_INDEX: join(f.archív, '.search.db'), ...env },
+  });
+  writeFileSync(join(f.archív, 'a.md'), '---\ndate: 2026-09-01\n---\n\nPrvý odsek o faktúrach.\n\nDruhý odsek o katastri.\n');
+  writeFileSync(join(f.archív, 'b.md'), 'Zmazaný prepis o rozpočte.\n');
+  assert.equal(beh(['--index']).status, 0);
+  assert.match(beh(['--index']).stdout, /up to date/);
+
+  writeFileSync(join(f.archív, 'a.md'), '---\ndate: 2026-09-01\n---\n\nPrvý odsek o faktúrach.\n\nDruhý odsek o katastri.\n\nTretí odsek: limit dávky je 15.\n');
+  writeFileSync(join(f.archív, 'c.md'), 'Nový prepis o vikendovej údržbe.\n');
+  spawnSync(process.execPath, ['-e', `require('fs').rmSync(${JSON.stringify(join(f.archív, 'b.md'))})`]);
+  writeFileSync(join(stopa, '2026-09-01-limit.md'), '# 2026-09-01 · Rozhodnutie o veľkosti dávky\n\n- [a](../archive/a.md#L9-L9)\n');
+  const v = beh(['--index']);
+  assert.equal(v.status, 0, v.stderr);
+  assert.match(v.stdout, /2 transcript\(s\) re-indexed/);
+
+  const otazky = ['faktúrach', 'rozpočte', 'limit dávky', 'vikendovej', 'katastri'];
+  const pred = otazky.map((q) => beh([q]).stdout);
+  assert.equal(beh(['--index', '--full']).status, 0);
+  const po = otazky.map((q) => beh([q]).stdout);
+  assert.deepEqual(pred, po);
+  assert.doesNotMatch(pred[1], /b\.md/);
+  // Téma sa nájde slovom, ktoré je len v jej rozsahu.
+  assert.match(beh(['limit 15']).stdout, /Trail topics[\s\S]*veľkosti dávky/);
+});
+
+/*
+  Dopísaný prepis sa indexuje od posledného úseku, prepísaný celý.
+  Oboje musí dať tú istú odpoveď ako stavba od nuly.
+*/
+test('Dopísaný aj prepísaný prepis dá tú istú odpoveď ako stavba od nuly', () => {
+  const f = príprava();
+  const odsek = (i) => `Odsek ${i}: ${'rozhodnutie o limite '.repeat(30)}\n\n`;
+  let text = Array.from({ length: 6 }, (_, i) => odsek(i)).join('');
+  writeFileSync(join(f.archív, 'a.md'), text);
+  assert.equal(f.beh(['--index']).status, 0);
+  text += 'Dopísaný odsek o vikiere a meradle.\n\n' + odsek(7);
+  writeFileSync(join(f.archív, 'a.md'), text);
+  assert.equal(f.beh(['--index']).status, 0);
+  const otazky = ['vikiere meradle', 'odsek 7', 'odsek 3 limite'];
+  const dopisane = otazky.map((q) => f.beh([q]).stdout);
+  assert.match(dopisane[0], /a\.md:/);
+  assert.equal(f.beh(['--index', '--full']).status, 0);
+  assert.deepEqual(otazky.map((q) => f.beh([q]).stdout), dopisane);
+  // Prepísaný začiatok: odtlačok nesedí, súbor sa preindexuje celý.
+  writeFileSync(join(f.archív, 'a.md'), 'Celkom iný začiatok o katastri.\n\n' + text.slice(200));
+  assert.equal(f.beh(['--index']).status, 0);
+  const prepisane = ['katastri', ...otazky].map((q) => f.beh([q]).stdout);
+  assert.equal(f.beh(['--index', '--full']).status, 0);
+  assert.deepEqual(['katastri', ...otazky].map((q) => f.beh([q]).stdout), prepisane);
+  assert.match(prepisane[0], /a\.md:1-/);
+});

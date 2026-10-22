@@ -137,3 +137,22 @@ test('Tichý beh bez .memex a bez memex.json nezaloží nič', () => {
   // Ručný beh je vedomé rozhodnutie a mapu založí.
   assert.equal(f.beh().status, 0);
 });
+
+/*
+  Cache mapy nesmie odpovedať starým obsahom.
+
+  Súbor sa zmení medzi dvoma dotazmi; druhý dotaz musí vidieť nový popis
+  a nový skrytý pojem, nie to, čo si cache pamätala z prvého.
+*/
+test('Zmenený súbor sa v mape prejaví hneď, aj keď je cache plná', () => {
+  const f = príprava({
+    'src/a.ts': '/**\n * Stará veta o module.\n */\nexport const x = 1;\n',
+    'src/b.ts': '/**\n * Iný modul.\n */\nexport const y = 2;\n',
+  });
+  assert.match(f.beh('find', 'stara').stdout, /Stará veta/);
+  writeFileSync(join(f.p, 'src/a.ts'), '/**\n * Nová veta o module.\n */\nexport const prepocitanieKurzu = 1;\n', 'utf8');
+  const v = f.beh('find', 'nova').stdout;
+  assert.match(v, /Nová veta/);
+  assert.doesNotMatch(v, /Stará veta/);
+  assert.match(f.beh('find', 'prepocitaniekurzu').stdout, /src\/a\.ts/);
+});

@@ -16,6 +16,9 @@
  *           Nadpis záznamu je dotaz, jeho rozsah riadkov je správna odpoveď —
  *           kľúč, ktorý nikto pre tento test nepísal, rovnako ako pri commitoch.
  *
+ * `parafraza` Nájde sa téma stopy, keď sa pýta slovami z rozhovoru, nie z
+ *           nadpisu? Úroveň tém pozri pri funkcii `parafraza()`.
+ *
  * `pravda`  Koľko ukazovateľov je nepravdivých? Recall vidí len to, čo mapa
  *           našla, nie čo si vymyslela. Súbor sa počíta ako pravdivý, keď
  *           hľadané slovo naozaj obsahuje. Toto je jediné miesto, kde vidno
@@ -300,7 +303,105 @@ function pamat() {
   return `n=${String(vzorka.length).padStart(3)}  R@1 ${pc(r1)}%  R@3 ${pc(r3)}%  R@8 ${pc(r8)}%  MRR ${(mrr / vzorka.length).toFixed(3)}  prázdne ${pc(prazdne)}%`;
 }
 
+/*
+  Benchmark úrovne tém — nájde sa téma stopy, keď sa pýta inými slovami?
+
+  `pamat` meria úseky a dotazom je celý nadpis, takže úroveň tém by v ňom
+  našla samu seba. Skutočná otázka býva iná: človek si pamätá detail
+  rozhovoru, nie to, ako ho niekto nadpísal. Preto dve sady dotazov nad tými
+  istými témami:
+
+  · `rozsah` — štyri slová z textu, na ktorý téma ukazuje, a žiadne z nadpisu.
+    Slová sa berú z tých, čo sú aspoň v dvoch a najviac v tristo rozsahoch:
+    jedinečné by to mali zadarmo, všadeprítomné by nič nemerali.
+  · `nadpis` — štyri slová z nadpisu.
+
+  Zásah je, keď medzi prvými štyrmi témami (rôznymi nadpismi) je rozsah, ktorý
+  sa prekrýva s ukazovateľom záznamu. Pýta sa cez `search.mjs --batch`, teda
+  cez kód, ktorý beží.
+
+  ⚠️ Slová z rozsahu sú zároveň v archíve, takže sada `rozsah` je ľahšia než
+  skutočná parafráza. Meria, či úroveň tém parafrázu vôbec dosiahne, nie s akou
+  úspešnosťou ju dosiahne pri otázke človeka.
+*/
+function parafraza() {
+  const { trail, archive } = kde();
+  if (!existsSync(trail)) return `ukazovateľ nie je v ${trail}`;
+  const riadky = new Map();
+  const prepis = (f) => {
+    if (!riadky.has(f)) {
+      try { riadky.set(f, readFileSync(join(archive, f), 'utf8').replace(/ <!-- memex:[a-f0-9]{24,64} -->/g, '').split('\n')); }
+      catch { riadky.set(f, null); }
+    }
+    return riadky.get(f);
+  };
+  const zaznamy = [];
+  for (const f of readdirSync(trail).filter((x) => x.endsWith('.md')).sort()) {
+    const t = readFileSync(join(trail, f), 'utf8');
+    const h = /^# (20\d\d-\d\d-\d\d)\s*·\s*(.+)$/m.exec(t);
+    if (!h) continue;
+    const body = [...t.matchAll(/\]\(([^)#]+)#L(\d+)(?:-L(\d+))?\)/g)]
+      .map((m) => ({ subor: m[1].split('/').pop(), od: +m[2], do: +(m[3] ?? m[2]) }));
+    if (!body.length) continue;
+    const text = body.map((b) => (prepis(b.subor) ?? []).slice(b.od - 1, b.do).join('\n')).join('\n');
+    zaznamy.push({ nadpis: h[2].trim(), body, text });
+  }
+  if (!zaznamy.length) return `žiadne použiteľné záznamy v ${trail}`;
+  const df = new Map();
+  for (const z of zaznamy) for (const w of new Set(undia(z.text).match(/\p{L}{5,}/gu) ?? [])) df.set(w, (df.get(w) ?? 0) + 1);
+  let semienko = 11;
+  const nahoda = () => ((semienko = (semienko * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const vyber = (zoznam, k) => { const z = [...zoznam], out = []; while (z.length && out.length < k) out.push(z.splice(Math.floor(nahoda() * z.length), 1)[0]); return out; };
+  const pocet = N === 300 ? 600 : N;
+  const krok = Math.max(1, Math.floor(zaznamy.length / pocet));
+  const sada = [];
+  for (let i = 0; i < zaznamy.length && sada.length < pocet; i += krok) {
+    const z = zaznamy[i];
+    const vNadpise = undia(z.nadpis).match(/\p{L}{4,}/gu) ?? [];
+    const kandidati = [...new Set(undia(z.text).match(/\p{L}{5,}/gu) ?? [])]
+      .filter((w) => !vNadpise.some((h) => h.startsWith(w.slice(0, 5)) || w.startsWith(h.slice(0, 5))))
+      .filter((w) => (df.get(w) ?? 0) >= 2 && (df.get(w) ?? 0) <= 300);
+    if (kandidati.length < 4) continue;
+    const zNadpisu = z.nadpis.split(/\s+/).map((x) => x.replace(/"/g, '')).filter((x) => x.length >= 4);
+    sada.push({ z, rozsah: vyber(kandidati, 4).join(' '), nadpis: vyber(zNadpisu, 4).join(' ') });
+  }
+  const zmeraj = (pole) => {
+    const vystup = execFileSync(
+      'node',
+      [fileURLToPath(new URL('./search.mjs', import.meta.url)), '--batch', '--n', '8'],
+      { cwd: APP, encoding: 'utf8', maxBuffer: 1 << 28, input: sada.map((u) => u[pole]).join('\n') },
+    );
+    const bloky = vystup.split(String.fromCharCode(0));
+    let r1 = 0, r4 = 0, mrr = 0;
+    const pol = [0, 0];
+    sada.forEach((u, i) => {
+      const blok = bloky[i] ?? '';
+      const zac = blok.indexOf('Trail topics');
+      if (zac < 0) return;
+      const sekcia = blok.slice(zac).split('\n\n')[0];
+      const temy = sekcia.split('\n').filter((r) => r.trim().startsWith('→')).map((r) => {
+        let subor = null;
+        return r.trim().slice(1).trim().split(', ').map((x) => {
+          const m = /^(?:([\w.-]+\.md):)?(\d+)-(\d+)$/.exec(x.trim());
+          if (!m) return null;
+          if (m[1]) subor = m[1];
+          return { subor, od: +m[2], doo: +m[3] };
+        }).filter(Boolean);
+      });
+      const p = temy.findIndex((rozsahy) => rozsahy.some((x) => u.z.body.some((b) => b.subor === x.subor && x.od <= b.do && x.doo >= b.od)));
+      if (p < 0) return;
+      mrr += 1 / (p + 1); pol[i % 2] += 1 / (p + 1);
+      if (p === 0) r1++;
+      r4++;
+    });
+    const n = sada.length, pc = (x) => ((x / n) * 100).toFixed(1).padStart(5);
+    return `${pole.padEnd(8)} n=${n}  R@1 ${pc(r1)}%  R@4 ${pc(r4)}%  MRR ${(mrr / n).toFixed(3)}  (párne ${(pol[0] / Math.ceil(n / 2)).toFixed(3)}, nepárne ${(pol[1] / Math.floor(n / 2)).toFixed(3)})`;
+  };
+  return `témy stopy, ${zaznamy.length} záznamov\n  ${zmeraj('rozsah')}\n  ${zmeraj('nadpis')}`;
+}
+
 const stitok = (process.env.MEMEX_ABLATE ? `bez: ${process.env.MEMEX_ABLATE}` : 'plná mapa').padEnd(22);
+if (REZIM === 'parafraza') { console.log(parafraza()); process.exit(0); }
 if (REZIM === 'pravda') console.log(`${stitok}\n${pravda(ulohy(zoSlov))}`);
 else if (REZIM === 'skratky') console.log(`${stitok}${recall(ulohy(zoSkratiek))}`);
 else if (REZIM === 'veta') console.log(`${stitok}${recall(ulohy(zVety))}`);

@@ -47,6 +47,15 @@ persistent bug, and it was never the hook.
 So the trigger above is now **unmet** — 1.2 seconds against a threshold of
 three. This item stays deferred. Measure again before building it.
 
+↳ **2026-10-22 — the trigger has fired on both counts.** The same project now
+has 170 transcripts (30 MB, 50 424 chunks) and a full rebuild takes **5.3 to
+8.8 s**. On the installed 0.23.0, whose four SessionEnd hooks still ran in
+parallel, five rebuilds in three days were cut off mid-write and left 165 MB
+of half-built indexes behind. Built in 0.27.0 — see "Built since this file was written". Note the trail now costs more to
+read than the archive: 10 540 small files take 12.7 s to open on Windows
+against 0.44 s for all 30 MB of transcripts, so an incremental index has to
+skip unchanged trail files too, not only transcripts.
+
 ### Hot and cold memory
 
 Keep the last few weeks at full granularity and older sessions as topics only,
@@ -57,6 +66,11 @@ so the index stays small as the archive grows for years.
 **Today:** the database is small enough that the question has not come up. Note
 that this and the incremental index solve overlapping problems — do the
 incremental one first and re-measure before starting this.
+
+↳ **2026-10-22: half of the trigger.** The index is 65.6 MB, and 85.5 MB with
+the hidden text of trail topics (0.27.0). A search takes about 100 ms, far
+under the second. Size alone is disk, which is cheap; leave it until a search
+gets slow.
 
 ### Compressing the cold end of the archive
 
@@ -103,6 +117,15 @@ question: tiered lookup (built in 0.25.0, see below) answers one for 832
 tokens and reads the index only as a fallback. The pressure this entry was
 under came from that cost, not from threading — and threading remains the only
 answer to a decision that spans files.
+
+↳ **2026-10-22: 3.1 MB, about a million tokens, at 10 536 topics** — the
+trigger is passed a hundred times over, and the full read stopped being a
+fallback at all: it cannot be read. What took its place is cheaper than
+threading: trail topics are now searched in the text they point at (0.27.0),
+which brings a paraphrase from 2.4 % to 80.8 % within the first four. Threads
+remain the answer only to the narrower question — one decision across files
+and months — and that question now has no measurement behind it. Build a
+test set of such questions before building this.
 
 **Shape:** a `thread_key` in the entry, assigned explicitly by the distiller or
 automatically only on an exact slug match within 30 days. Never fuzzy: merging
@@ -161,6 +184,16 @@ the transcripts show sessions opening with orientation rather than work.
 always-on. Memex's current always-on cost is about 310 tokens; this would
 roughly double it. Claude Code's own `--continue` and `--resume` already cover
 part of the need.
+
+↳ **2026-10-22: the cost side of this was weighed in the wrong unit.**
+`kontext.mjs` over 68 000 API calls: the average context is 257k tokens, and
+reading it again from cache on every call is 71 % of the price. A few hundred
+always-on tokens are a tenth of a percent of one call. What does cost is
+context that grows: 74 % of the price falls on calls above 200k. So the
+question for this entry is no longer "is 300 tokens too many" but "does it
+let a session be cleared or compacted earlier" — a small pointer that makes
+a fresh session as good as a 600k one pays for itself many times over. Still
+unmeasured; measure it as that.
 
 ### Reverse import index ("blast radius")
 
@@ -439,6 +472,36 @@ turns fifteen hits into a hundred and fifty.
 
 ## Built since this file was written
 
+**Incremental full-text index** (0.27.0). The trigger above fired. The index
+remembers which transcripts and trail files it knows by size and time; a
+transcript that grew is re-indexed from its last chunk — chunking restarts
+cleanly at a chunk boundary, and a hash of everything before it proves the
+file was only appended to — and trail topics are redone only where their
+range reaches the changed part. One transaction over the live index. On a
+copy of the real archive: 7.7 s → 1.5 s, 0.9 s with nothing new. The same
+release made the archiver incremental (8.3 s → 0.18 s) and found that it had
+been stuck for a week on one corrupt source line.
+
+**Compaction hooks** (0.27.0). `PreCompact` archives and indexes; a
+`SessionStart` hook on `compact` points at the archive in two sentences.
+
+**Trail topics searched in what they point at** (0.27.0). The paraphrase
+weakness above, closed without embeddings: up to 2 000 characters of each
+pointer's range are indexed beside the heading and never printed. Heading
+weighted 3 : 1 against that text. `bench.mjs parafraza`, 537 topics: R@4
+2.4 % → 80.8 %, MRR 0.019 → 0.688 on questions built from words the heading
+does not contain; heading-word questions 0.993 → 0.988. At 6 : 1 the second
+set is 0.996 and the first only 0.610.
+
+**Map cache** (0.27.0). Every `find` rebuilt the whole map: 12–14 s on 2 593
+modules. Per-file analysis is kept in the system temp directory and reused
+while the file's time and size match; output identical, `bench.mjs veta`
+identical to three decimals, a repeated lookup 2.0 s.
+
+**Where the tokens go** (`kontext.mjs`, 0.27.0). See the entry on carrying
+yesterday into today: read from cache is 71 % of the price, and the measure
+that matters is context size times the calls that carry it.
+
 **Tiered memory lookup** (0.25.0). Every memory question used to start by
 reading the whole trail index — measured, **11 891 tokens** at 260 topics, and
 one line longer with every topic. A search now returns curated trail topics,
@@ -585,6 +648,18 @@ lost to a `slice`, and it lost on every mode tried.
 
 **Trigger:** none. If someone wants to revisit it, the bar is beating 0.374 on
 `bench.mjs veta` and 0.206 on `BENCH_W=1 bench.mjs`, on both halves.
+
+### A short passage scored by its neighbours
+
+Chunk size is a trade — 2 000 characters had the best MRR and four times the
+reading. The idea was to keep 400-character pointers but score each by its
+own bm25 plus a share of its neighbours', so a short pointer would rank as if
+it were long. Measured on 600 topics over 50 424 chunks, 2026-10-22: on whole
+headings +0.006 at a neighbour weight of 0.3 and −0.015 at 0.5; on
+four-word questions **−0.032 and −0.096**. A neighbour that matches is as
+often another topic as the same one.
+
+**Trigger:** none.
 
 ### A longer list of results
 

@@ -32,7 +32,7 @@ import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { kde, prepinac, hookVstup } from './kde.mjs';
 import { archivuj } from './archivator.mjs';
-import { redakcia, failureLine } from './prevod.mjs';
+import { redakcia, failureLine, prvyArgument } from './prevod.mjs';
 
 export const priecinokRelacii = () =>
   prepinac('sessions') ??
@@ -63,13 +63,17 @@ export function patriProjektu(cwd, koren) {
 
 /** Prvé riadky prepisu — `session_meta` a začiatok prvého ťahu. Celý súbor sa nečíta. */
 async function hlavicka(cesta) {
-  const citacka = createInterface({ input: createReadStream(cesta), crlfDelay: Infinity });
+  const prud = createReadStream(cesta);
+  const citacka = createInterface({ input: prud, crlfDelay: Infinity });
   const riadky = [];
   for await (const r of citacka) {
     if (r.trim()) riadky.push(r);
     if (riadky.length >= 3) break;
   }
+  // `close()` zavrie čítačku riadkov, nie súbor: 200 z 200 prepisov nad 64 kB
+  // zostalo otvorených, a prechádzajú sa relácie všetkých projektov.
   citacka.close();
+  prud.destroy();
   let meta = null;
   try { meta = JSON.parse(riadky[0] ?? ''); } catch { /* nečitateľný začiatok = nie je náš */ }
   /*
@@ -135,14 +139,6 @@ const textSpravy = (content) =>
     .join('');
 
 const cisty = (t) => redakcia(String(t).replace(/data:[a-z/]+;base64,[A-Za-z0-9+/=]+/g, '[image]')).trim();
-
-function prvyArgument(i) {
-  for (const [k, v] of Object.entries(i ?? {})) {
-    if (typeof v === 'number' || typeof v === 'boolean') return ` ${k}=${v}`;
-    if (typeof v === 'string' && v.length <= 60 && v.length > 0 && !/\s/.test(v)) return ` ${k}=${v}`;
-  }
-  return '';
-}
 
 const cestyZPatchu = (t) =>
   [...String(t).matchAll(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm)].map((m) => m[1].trim());

@@ -54,7 +54,16 @@ const SOURCE =
   porovnával polovicu meranú jedným pravidlom s polovicou meranou druhým — čo
   je horší nezmysel než pôvodná chyba, lebo vyzerá ako zmena v práci.
 */
-const VERZIA = 2;
+/*
+  Verzia 3 počíta aj podagentov a veľkosť kontextu.
+
+  Podagenti ležia v `<relácia>/subagents/` a telemetria ich nevidela. Na
+  skutočnom projekte stoja 56 % ceny. A „čerstvé tokeny" sú štvrtina ceny:
+  71 % je čítanie kontextu z cache pri každom volaní (pozri `kontext.mjs`).
+  Riadky starších verzií sa prepočítajú, aby polovice merali to isté.
+*/
+const VERZIA = 3;
+const VAHY = { input: 1, cacheWrite: 1.25, cacheRead: 0.1, output: 5 };
 
 // ── čo sa počíta ───────────────────────────────────────────────────────────
 
@@ -106,7 +115,7 @@ function zaradBash(prikaz) {
  * Číta sa po riadkoch. Prepisy majú desiatky tisíc riadkov a stovky megabajtov
  * — načítať taký súbor naraz je pamäťová špička bez dôvodu.
  */
-async function precitaj(cesta) {
+async function precitaj(cesta, podagenti = []) {
   const r = {
     v: VERZIA,
     session: basename(cesta, '.jsonl'),
@@ -116,7 +125,22 @@ async function precitaj(cesta) {
     lookup: 0, read: 0, edit: 0,
     map: 0,
     beforeFirstEdit: null,
+    // Volania s kontextom nad 200k a cena podagentov (váhy VAHY), oboje pre prehľad.
+    over200k: 0, subCost: 0, subagents: podagenti.length,
   };
+  await prejdi(r, cesta, true);
+  for (const p of podagenti) await prejdi(r, p, false);
+  return r;
+}
+
+/*
+  Jeden prepis — hlavný alebo podagenta — pripočítaný k riadku relácie.
+
+  Zásahy a hľadania podagenta sa počítajú do relácie: je to tá istá práca,
+  len delegovaná. „Kroky pred prvým zásahom" sú len z hlavnej relácie, lebo
+  podagent začína od nuly a jeho poradie s hlavnou nie je v jednom súbore.
+*/
+async function prejdi(r, cesta, hlavna) {
   let krokov = 0;
   /*
     Jedna odpoveď sa účtuje raz.
@@ -140,18 +164,21 @@ async function precitaj(cesta) {
     if (!riadok) continue;
     let j;
     try { j = JSON.parse(riadok); } catch { continue; }
-    if (!r.day && j.timestamp) r.day = j.timestamp.slice(0, 10);
+    if (hlavna && !r.day && j.timestamp) r.day = j.timestamp.slice(0, 10);
 
     const u = j.message?.usage;
     // Bez `id` sa započíta — je to jediný záznam o tom volaní, aký existuje.
     const id = j.message?.id;
     if (u && !(id && zapocitane.has(id))) {
       if (id) zapocitane.add(id);
+      const x = {
+        input: u.input_tokens ?? 0, cacheWrite: u.cache_creation_input_tokens ?? 0,
+        cacheRead: u.cache_read_input_tokens ?? 0, output: u.output_tokens ?? 0,
+      };
       r.turns++;
-      r.input += u.input_tokens ?? 0;
-      r.cacheWrite += u.cache_creation_input_tokens ?? 0;
-      r.cacheRead += u.cache_read_input_tokens ?? 0;
-      r.output += u.output_tokens ?? 0;
+      for (const k in x) r[k] += x[k];
+      if (x.input + x.cacheWrite + x.cacheRead > 200_000) r.over200k++;
+      if (!hlavna) r.subCost += Object.entries(x).reduce((a, [k, n]) => a + n * VAHY[k], 0);
     }
 
     for (const c of j.message?.content ?? []) {
@@ -165,6 +192,7 @@ async function precitaj(cesta) {
 
       if (/map\.mjs/.test(String(c.input?.command ?? ''))) r.map++;
       r[druh]++;
+      if (!hlavna) continue;
       if (druh === 'edit') {
         // Kroky pred prvým zásahom — jadro celého merania.
         if (r.beforeFirstEdit === null) r.beforeFirstEdit = krokov;
@@ -173,7 +201,6 @@ async function precitaj(cesta) {
       }
     }
   }
-  return r;
 }
 
 // ── zber ───────────────────────────────────────────────────────────────────
@@ -210,11 +237,19 @@ async function zozbieraj(ticho) {
     if (!f.endsWith('.jsonl')) continue;
     const cesta = join(SOURCE, f);
     const s = statSync(cesta);
-    const znamka = `${s.size}:${Math.floor(s.mtimeMs)}`;
+    // Podagenti relácie a ich veľkosti patria do známky: podagent na pozadí
+    // dopisuje svoj súbor aj vtedy, keď hlavná relácia stojí.
+    const priecinokPodagentov = join(SOURCE, basename(f, '.jsonl'), 'subagents');
+    const podagenti = existsSync(priecinokPodagentov)
+      ? readdirSync(priecinokPodagentov).filter((x) => x.endsWith('.jsonl')).map((x) => join(priecinokPodagentov, x))
+      : [];
+    let velkostPodagentov = 0;
+    for (const p of podagenti) { try { velkostPodagentov += statSync(p).size; } catch { /* zmizol */ } }
+    const znamka = `${s.size}:${Math.floor(s.mtimeMs)}:${podagenti.length}:${velkostPodagentov}`;
     // Prepis, ktorý sa nezmenil, sa neprechádza znova — inak by prehľad rástol
     // z minút na desiatky minút, ako archív pribúda.
     if (stav[f] === znamka && hotove.has(basename(f, '.jsonl'))) continue;
-    hotove.set(basename(f, '.jsonl'), await precitaj(cesta));
+    hotove.set(basename(f, '.jsonl'), await precitaj(cesta, podagenti));
     stav[f] = znamka;
     novych++;
   }
@@ -267,8 +302,24 @@ function prehlad(riadky) {
   riadok('reads per edit', naZasah((x) => x.read));
   console.log('');
   console.log('  Cost per edit');
+  /*
+    Vážená cena, nie len čerstvé tokeny.
+
+    Čerstvé tokeny sú vstup a zápis do cache — na skutočnom projekte štvrtina
+    ceny. Čítanie celého kontextu pri každom volaní stojí desatinu tokenu, ale
+    je ho toľko, že tvorí 71 %. Riadok v jednotkách „čerstvého tokenu" sčíta
+    všetko podľa pomerných cien (1 / 1,25 / 0,1 / 5) — dolár to nie je,
+    porovnanie polovíc áno.
+  */
+  const vazene = (x) => x.input * VAHY.input + x.cacheWrite * VAHY.cacheWrite + x.cacheRead * VAHY.cacheRead + x.output * VAHY.output;
+  riadok('weighted cost', naZasah(vazene));
   riadok('fresh input tokens', naZasah((x) => x.input + x.cacheWrite));
   riadok('output tokens', naZasah((x) => x.output));
+  console.log('');
+  console.log('  Context');
+  riadok('mean context per call', (x) => (x.turns ? (x.input + x.cacheWrite + x.cacheRead) / x.turns : 0));
+  riadok('calls over 200k', (x) => (x.turns ? (x.over200k / x.turns) * 100 : 0), ' %');
+  riadok('subagents, share of cost', (x) => { const c = vazene(x); return c ? (x.subCost / c) * 100 : 0; }, ' %');
   console.log('');
   console.log('  Volume');
   riadok('edits', (x) => x.edit);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, unlinkSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -110,9 +110,67 @@ test('Prepis s ťahmi iného archivára sa nemení', () => {
   assert.equal(v.status, 1); assert.match(v.stderr, /iného archivára/);
   assert.equal(f.čítaj(), sCudzím);
 });
+/*
+  Na Windowse `kill(pid, 0)` vie pre mŕtvy proces vrátiť EPERM a PID sa
+  recykluje. Zámok, ktorý vyzerá živý, ale má hodiny, nedrží nikto — na
+  skutočnom projekte kvôli nemu padala archivácia siedmich relácií.
+*/
+test('Starý zámok sa obnoví, aj keď jeho PID vyzerá živý; zvyšok obnovy neblokuje', () => {
+  const f = príprava([správa('a', 'Prvý fakt.')]); f.beh();
+  const zámok = join(f.p, '.memex/archive/.archive.lock');
+  writeFileSync(zámok, JSON.stringify({ pid: process.pid, token: 'starý' }));
+  writeFileSync(`${zámok}.obnova`, '');
+  const pred = (Date.now() - 2 * 3600_000) / 1000;
+  utimesSync(zámok, pred, pred); utimesSync(`${zámok}.obnova`, pred, pred);
+  f.pridaj(správa('b', 'Nový fakt.'));
+  const v = f.beh();
+  assert.equal(v.status, 0, v.stderr); assert.ok(f.čítaj().includes('Nový fakt.'));
+});
 test('Zámok ukončeného procesu sa bezpečne obnoví', () => {
   const f = príprava([správa('a', 'Prvý fakt.')]); f.beh();
   const ukončený = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
   writeFileSync(join(f.p, '.memex/archive/.archive.lock'), JSON.stringify({ pid: ukončený.pid, token: 'ukončený' }));
   f.pridaj(správa('b', 'Nový fakt.')); assert.equal(f.beh().status, 0); assert.ok(f.čítaj().includes('Nový fakt.'));
+});
+
+/*
+  Pokazený riadok uprostred zdroja nesmie archív zastaviť natrvalo.
+  Na skutočnom projekte: 252 025 nulových bajtov po páde stroja a týždeň
+  najdlhšej relácie mimo archívu.
+*/
+test('Riadok z nulových bajtov uprostred zdroja sa preskočí a archív ide ďalej', () => {
+  const f = príprava([správa('a', 'Pred pádom.')]);
+  appendFileSync(f.súbor, '\0'.repeat(5000) + '\n' + '{"rozbitý": \n');
+  f.pridaj(správa('b', 'Po páde.'));
+  const v = f.beh();
+  assert.equal(v.status, 0, v.stderr);
+  assert.match(v.stderr, /2 pokazených riadkov/);
+  assert.ok(f.čítaj().includes('Pred pádom.') && f.čítaj().includes('Po páde.'));
+  f.pridaj(správa('c', 'O deň neskôr.'));
+  assert.equal(f.beh().status, 0);
+  assert.equal((f.čítaj().match(/Po páde\./g) || []).length, 1);
+  assert.ok(f.čítaj().includes('O deň neskôr.'));
+});
+
+test('Druhý beh číta len prírastok a nezmenenú reláciu nečíta vôbec', () => {
+  const f = príprava([správa('a', 'Prvý.')]); f.beh();
+  const stav = () => JSON.parse(readFileSync(f.stav, 'utf8')).relacia;
+  assert.equal(stav().offset, readFileSync(f.súbor).length);
+  const pred = f.čítaj();
+  assert.equal(f.beh().status, 0); assert.equal(f.čítaj(), pred);
+  f.pridaj(správa('b', 'Druhý.'));
+  assert.equal(f.beh().status, 0);
+  assert.ok(f.čítaj().startsWith(pred) && f.čítaj().includes('Druhý.'));
+  assert.equal(stav().offset, readFileSync(f.súbor).length);
+});
+
+test('Posledný riadok bez konca sa zapíše raz, aj keď sa dopíše neskôr', () => {
+  const f = príprava([správa('a', 'Prvý.')]); f.beh();
+  appendFileSync(f.súbor, JSON.stringify(správa('b', 'Bez konca riadka.')));
+  assert.equal(f.beh().status, 0);
+  assert.ok(f.čítaj().includes('Bez konca riadka.'));
+  appendFileSync(f.súbor, '\n'); f.pridaj(správa('c', 'Ďalší.'));
+  assert.equal(f.beh().status, 0);
+  assert.equal((f.čítaj().match(/Bez konca riadka\./g) || []).length, 1);
+  assert.ok(f.čítaj().includes('Ďalší.'));
 });

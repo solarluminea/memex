@@ -22,7 +22,8 @@
  * Žiadne čítanie prepisov, žiadne prehľadávanie.
  */
 import { readdirSync, existsSync, statSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { kde, prepisyVZdroji, hookVstup } from './kde.mjs';
 
 const TICHO = process.argv.includes('--quiet');
@@ -52,6 +53,28 @@ const prepisy = existsSync(CESTY.archive)
   ktorý si archív nezaložil, si ho nepýtal.
 */
 if (!prepisy.length) process.exit(0);
+
+/*
+  `--po-kompakcii` — jedna veta hneď po kompakcii, z hooku `SessionStart`
+  s matcherom `compact`.
+
+  Súhrn kompakcie je presne ten druh pamäte, ktorý tento projekt meral a
+  zamietol: tému drží, konkrétny fakt nie — a nikto si to nevšimne, lebo nič
+  nevyzerá chýbajúce. Hook `PreCompact` (`udrzba.mjs --pred-kompakciou`)
+  predtým zarchivoval a zaindexoval všetko, čo sa zhrnulo. Toto povie
+  agentovi, že to existuje a ako sa k tomu dostane. Dve vety, lebo sa
+  pripomínajú po každej kompakcii a nesú sa v kontexte až do ďalšej.
+*/
+if (process.argv.includes('--po-kompakcii')) {
+  const subor = TATO_RELACIA ? join(CESTY.archive, `${TATO_RELACIA}.md`) : null;
+  if (!subor || !existsSync(subor)) process.exit(0);
+  const riadkov = readFileSync(subor, 'utf8').split('\n').length;
+  const lomitka = (c) => c.split(sep).join('/');
+  const skript = lomitka(join(dirname(fileURLToPath(import.meta.url)), 'search.mjs'));
+  console.log(`memex: everything before this compaction is archived word for word in ${lomitka(relative(CESTY.koren, subor))}, lines 1-${riadkov}.`);
+  console.log(`The summary drops specifics. To recover a number, an error or a reason: node "${skript}" "<words>" and read the range it returns.`);
+  process.exit(0);
+}
 
 const zaostava = [];
 /** „1 session is" verzus „3 sessions are" — hlásenie sa číta, nie parsuje. */

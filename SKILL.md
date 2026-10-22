@@ -147,15 +147,15 @@ the map, so none of them can be forgotten. The map costs no tokens to rebuild �
    tiers at once: trail topics written by hand, topics derived from the
    transcripts by regex, and passages. Each is a file and a line range.
 2. Open the range with `Read` using `offset`/`limit`.
-3. **Read all of `.memex/TRAIL.md` only when that came up short.** It is
-   headings only, but on a real project it is ~12k tokens against ~800 for the
-   search — measured, a question costs **15× less** when it starts at step 1.
+3. **When that came up short, search again with other words or `--n 20`.**
+   Trail topics are matched on the text they point at as well as on their
+   heading — hidden, never printed — so a paraphrase reaches them: measured,
+   **80.8 %** of questions worded differently from the heading find the right
+   topic among the first four, against 2.4 % when only headings were searched.
 
-   It still earns that price in one case, so do not skip it out of habit: a
-   question phrased as a paraphrase that shares no word with any heading.
-   Measured — searching headings finds the right entry 57.7 % of the time, and
-   **0 %** when the wording deliberately avoids the heading's words. The tiers
-   are cheap and fallible; the full read is expensive and thorough.
+   Read all of `.memex/TRAIL.md` only when the search output says it is small
+   enough. It was 12k tokens at 260 topics; at 10 000 topics it is about a
+   million tokens and cannot be read at all.
 4. **Always cite file and line numbers.** A claim from memory that can't be
    checked is worse than no claim — in six months nobody will question it and
    people will build on it.

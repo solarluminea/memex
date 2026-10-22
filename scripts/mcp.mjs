@@ -24,7 +24,7 @@
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
@@ -87,7 +87,7 @@ function spusti(skript, args, k, casMs = 120000) {
   pomalšia odpoveď lepšia než odpoveď, ktorá nepozná poslednú reláciu.
 */
 function indexZaostava(k) {
-  const c = kde(k, []);
+  const c = kde(k, [], { hadz: true });
   if (!existsSync(c.archive)) return false;
   if (!existsSync(c.index)) return true;
   const t = statSync(c.index).mtimeMs;
@@ -108,16 +108,42 @@ const vnutri = (koren_, p) => {
   pamäte — tento nástroj nie je všeobecné čítanie disku.
 */
 function citaj(args, k) {
-  const c = kde(k, []);
+  const c = kde(k, [], { hadz: true });
   const subor = String(args.file ?? '').trim();
   if (!subor) throw new Error('Chýba `file` — meno prepisu z výsledku hľadania, napr. `abc123.md`.');
-  const kandidati = isAbsolute(subor) ? [subor] : [join(c.archive, subor), join(c.trail, subor), join(k, subor)];
-  const povolene = [c.archive, c.trail, dirname(c.trailIndex), c.root];
-  const cesta = kandidati.map((x) => resolve(x)).find((x) => existsSync(x) && povolene.some((p) => vnutri(resolve(p), x)));
+  /*
+    Cesta sa overí ako text skôr, než sa jej dotkne súborový systém.
+
+    `existsSync` stál pred kontrolou, takže `\\server\zdielane\x.md` otvoril
+    spojenie SMB von zo stroja (na Windowse aj s pokusom o prihlásenie) a na
+    dvadsať sekúnd zablokoval celý server. A `resolve` nerozbalí odkaz: spojka
+    v archíve smerujúca von prešla kontrolou a vrátila cudzí súbor. Preto
+    najprv text, potom skutočná cesta cez `realpathSync` — tá istá kontrola
+    nad tým, kam odkaz naozaj vedie.
+  */
+  if (/^[\\/]{2}/.test(subor)) throw new Error('Sieťové cesty sa nečítajú.');
+  const povolene = [c.archive, c.trail, dirname(c.trailIndex), c.root].map((p) => resolve(p));
+  const kandidati = (isAbsolute(subor) ? [subor] : [join(c.archive, subor), join(c.trail, subor), join(k, subor)])
+    .map((x) => resolve(x))
+    .filter((x) => povolene.some((p) => vnutri(p, x)));
+  const skutocne = (x) => { try { return realpathSync(x); } catch { return null; } };
+  const povoleneSkutocne = povolene.map((p) => skutocne(p)).filter(Boolean);
+  const cesta = kandidati.find((x) => {
+    const r = existsSync(x) ? skutocne(x) : null;
+    return r && povoleneSkutocne.some((p) => vnutri(p, r));
+  });
   if (!cesta) throw new Error(`Súbor ${subor} nie je v archíve ani v stope projektu ${k}.`);
   const riadky = readFileSync(cesta, 'utf8').split('\n');
-  const od = Math.max(1, Number(args.from) || 1);
-  const doo = Math.min(riadky.length, Number(args.to) || od + 79, od + 399);
+  /*
+    Rozsah sa orezáva na celé čísla od jednotky.
+
+    `to: -1` dalo `slice(0, -1)`, teda celý súbor bez posledného riadka —
+    limit štyristo riadkov sa obišiel jedným znamienkom, a prepis býva
+    stovky megabajtov.
+  */
+  const cele = (x) => (Number.isFinite(Number(x)) ? Math.trunc(Number(x)) : 0);
+  const od = Math.min(Math.max(1, cele(args.from) || 1), riadky.length);
+  const doo = Math.max(od, Math.min(riadky.length, cele(args.to) > 0 ? cele(args.to) : od + 79, od + 399));
   const out = riadky.slice(od - 1, doo).map((r, i) => `${String(od + i).padStart(6)}  ${r.replace(/\r$/, '')}`);
   const hlava = `${relative(k, cesta).split(sep).join('/')} — riadky ${od}-${doo} z ${riadky.length}`;
   return hlava + '\n' + out.join('\n') + (doo < riadky.length ? `\n… pokračuje (from: ${doo + 1})` : '');
@@ -145,7 +171,8 @@ const NASTROJE = [
     },
     async run(a, k) {
       if (indexZaostava(k)) await spusti('search.mjs', ['--index', '--quiet'], k, 300000);
-      return spusti('search.mjs', [String(a.query), '--n', String(Math.min(30, Math.max(1, Number(a.n) || 8)))], k);
+      // Otázka ide za `--`: otázka `--index` inak prestavala index namiesto hľadania.
+      return spusti('search.mjs', ['--n', String(Math.min(30, Math.max(1, Number(a.n) || 8))), '--', String(a.query)], k);
     },
   },
   {
@@ -183,7 +210,9 @@ const NASTROJE = [
       properties: { task: { type: 'string', description: 'Úloha celou vetou.' }, project: PROJEKT },
     },
     async run(a, k) {
-      return a.task && String(a.task).trim() ? spusti('map.mjs', ['find', String(a.task)], k) : spusti('map.mjs', [], k, 300000);
+      // Úvodné pomlčky preč: úloha `--batch` by mapu nechala čakať na vstup do časového limitu.
+      const uloha = String(a.task ?? '').replace(/^\s*-+/, '').trim();
+      return uloha ? spusti('map.mjs', ['find', uloha], k) : spusti('map.mjs', [], k, 300000);
     },
   },
   {
@@ -194,7 +223,18 @@ const NASTROJE = [
       properties: { file: { type: 'string' }, project: PROJEKT },
       required: ['file'],
     },
-    async run(a, k) { return spusti('map.mjs', ['outline', String(a.file)], k); },
+    async run(a, k) {
+      /*
+        Osnova len zo súborov projektu.
+
+        `map.mjs outline` číta aj súbor mimo mapy, a to podľa absolútnej cesty
+        kdekoľvek na disku — z príkazového riadka je to vlastnosť, cez HTTP
+        čítanie mien deklarácií z cudzích súborov a test ich existencie.
+      */
+      const s = String(a.file ?? '').trim();
+      if (!s || /^[\\/]{2}/.test(s) || !vnutri(k, resolve(k, s))) throw new Error('Osnova sa robí len zo súborov v projekte.');
+      return spusti('map.mjs', ['outline', relative(k, resolve(k, s)).split(sep).join('/')], k);
+    },
   },
   {
     name: 'memex_status',
@@ -212,7 +252,7 @@ const NASTROJE = [
       const casti = [];
       const codex = await spusti('codex.mjs', [], k, 300000);
       casti.push('Codex: ' + codex.text);
-      const c = kde(k, []);
+      const c = kde(k, [], { hadz: true });
       if (c.zdroj.cesta) casti.push('Claude Code: ' + (await spusti('archive.mjs', [], k, 300000)).text);
       const index = await spusti('search.mjs', ['--index'], k, 300000);
       casti.push('Index: ' + index.text);
@@ -231,7 +271,15 @@ async function vybav(sprava) {
   const odpoved = (result) => ({ jsonrpc: '2.0', id, result });
   const chyba = (code, message) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
   if (sprava?.jsonrpc !== '2.0' || typeof method !== 'string') return chyba(-32600, 'Invalid Request');
-  const notifikacia = id === undefined || id === null;
+  /*
+    Na notifikáciu sa neodpovedá a nič sa pri nej nespúšťa.
+
+    Doteraz sa `tools/call` bez `id` vykonal a poslal odpoveď s `id: undefined`
+    — JSON-RPC 2.0 to zakazuje a klient takú odpoveď nemá ku komu priradiť.
+    Notifikácie, ktoré MCP posiela (`notifications/initialized` a spol.),
+    nepotrebujú od servera nič.
+  */
+  if (id === undefined || id === null) return null;
   switch (method) {
     case 'initialize': {
       const chce = params?.protocolVersion;
@@ -257,12 +305,13 @@ async function vybav(sprava) {
       }
     }
     default:
-      return notifikacia ? null : chyba(-32601, `Method not found: ${method}`);
+      return chyba(-32601, `Method not found: ${method}`);
   }
 }
 
 async function vybavTelo(telo) {
   if (Array.isArray(telo)) {
+    if (!telo.length) return { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } };
     const out = (await Promise.all(telo.map(vybav))).filter(Boolean);
     return out.length ? out : null;
   }
@@ -281,18 +330,39 @@ if (HTTP_PORT) {
   const token = process.env.MEMEX_MCP_TOKEN || randomBytes(18).toString('base64url');
   const ocakavane = Buffer.from(`/mcp/${token}`);
   const host = process.env.MEMEX_MCP_HOST || '127.0.0.1';
+  /*
+    Žiadna požiadavka nesmie server zhodiť.
+
+    Dve to vedeli bez tokenu alebo s ním: `GET //[` — `new URL` vyhodí výnimku
+    ešte pred kontrolou tokenu a nezachytená výnimka v obsluhe ukončí proces —
+    a klient, ktorý sa odpojí uprostred tela. Obe overené, obe s kódom 1.
+    Telo sa skladá z bajtov a dekóduje naraz: po kúskoch sa znak s diakritikou
+    na hranici kúskov rozbil na dva otázniky.
+  */
   createServer(async (req, res) => {
-    const cesta = Buffer.from(new URL(req.url, 'http://x').pathname.replace(/\/$/, ''));
-    if (cesta.length !== ocakavane.length || !timingSafeEqual(cesta, ocakavane)) { res.writeHead(404).end(); return; }
-    if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }).end(); return; }
-    let data = '';
-    for await (const kus of req) { data += kus; if (data.length > 1 << 20) { res.writeHead(413).end(); return; } }
-    let telo;
-    try { telo = JSON.parse(data); }
-    catch { res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } })); return; }
-    const out = await vybavTelo(telo);
-    if (!out) { res.writeHead(202).end(); return; }
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(out));
+    try {
+      let pathname;
+      try { pathname = new URL(req.url, 'http://x').pathname; } catch { res.writeHead(400).end(); return; }
+      const cesta = Buffer.from(pathname.replace(/\/$/, ''));
+      if (cesta.length !== ocakavane.length || !timingSafeEqual(cesta, ocakavane)) { res.writeHead(404).end(); return; }
+      if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }).end(); return; }
+      const kusy = [];
+      let dlzka = 0;
+      for await (const kus of req) {
+        kusy.push(kus);
+        dlzka += kus.length;
+        if (dlzka > 1 << 20) { res.writeHead(413).end(); return; }
+      }
+      let telo;
+      try { telo = JSON.parse(Buffer.concat(kusy).toString('utf8')); }
+      catch { res.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } })); return; }
+      const out = await vybavTelo(telo);
+      if (!out) { res.writeHead(202).end(); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(out));
+    } catch {
+      // Odpojený klient alebo pokazený prenos: odpovedať niet komu, server žije ďalej.
+      if (!res.headersSent && !res.destroyed) res.writeHead(500).end();
+    }
   }).listen(Number(HTTP_PORT), host, () => {
     console.error(`memex MCP (HTTP) pre ${najdiKoren(PEVNY_KOREN ?? process.cwd())}`);
     console.error(`  http://${host}:${HTTP_PORT}/mcp/${token}`);

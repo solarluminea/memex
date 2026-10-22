@@ -46,8 +46,11 @@
  *   memex/scripts/map.mjs find <word>   lines that mention it
  *   memex/scripts/map.mjs --quiet       rebuild, print only on change
  */
-import { readdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, statSync, renameSync, rmSync } from 'node:fs';
 import { join, relative, basename, dirname, sep } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { kde } from './kde.mjs';
 
 const ROOT = process.env.MEMEX_PROJECT_ROOT || process.cwd();
@@ -545,77 +548,141 @@ function identifiers(text, medzi) {
 
 // ── building the map ───────────────────────────────────────────────────────
 
-function describe(path) {
-  let text;
-  try {
-    text = readFileSync(path, 'utf8');
-  } catch {
-    return { description: null, line: null };
-  }
+function describe(path, text) {
   const fromHeader = header(text);
   if (fromHeader) return { description: fromHeader, line: null };
   const fromUi = UI.test(path) ? fromInterface(text) : null;
   return fromUi ? { description: fromUi.text, line: fromUi.line } : { description: null, line: null };
 }
 
+/*
+  Medzivýsledky po súboroch, uložené mimo projektu.
+
+  Mapa sa stavala pri **každom** dotaze: prečítať a rozobrať všetky súbory, aby
+  sa dalo odpovedať na jeden. Pri 1 300 moduloch to bola sekunda a pol. Na tom
+  istom projekte o dva mesiace neskôr — 2 593 modulov — trvalo jedno `find`
+  **12 až 14 sekúnd**, z toho čítanie súborov 2,5 s a zvyšok regulárne výrazy
+  nad nimi. Telemetria pritom hovorí, že mapa sa použila v 8 zo 168 relácií;
+  dotaz, ktorý trvá dlhšie než grep celého repozitára, nemá ako vyhrať.
+
+  Čo sa ukladá: všetko, čo závisí len od jedného súboru — popis, riadok,
+  identifikátory, skratky, polia schémy, osnova. Čo závisí od celého projektu
+  (v koľkých súboroch je pojem, kde skratka „býva"), sa skladá zakaždým nanovo
+  z uložených kúskov, takže výsledok je ten istý ako pri stavbe od nuly.
+  Platnosť súboru je jeho čas zmeny a veľkosť; platnosť celej cache je
+  nastavenie mapy, schéma, vypínače merania a samotný `map.mjs`.
+
+  Prečo v dočasnom priečinku systému a nie v `.memex/`: ten býva v projekte
+  commitnutý (MAP.md v ňom má byť), a niekoľkomegabajtový medzisúbor by sa
+  do gitu dostal pri prvom `git add .`. Cache, ktorú systém zmaže, sa postaví
+  znova; cache v cudzom gite sa nezmaže nikdy.
+*/
+const CACHE = join(tmpdir(), `memex-mapcache-${createHash('sha1').update(ROOT.toLowerCase()).digest('hex').slice(0, 16)}.json`);
+
+function klucCache(polia) {
+  const ja = statSync(fileURLToPath(import.meta.url));
+  return createHash('sha1').update(JSON.stringify([
+    config, [...ABLATE].sort(), [...polia].sort(), ja.size, ja.mtimeMs,
+  ])).digest('hex');
+}
+
+function nacitajCache(kluc) {
+  if (process.env.MEMEX_MAP_CACHE === '0') return new Map();
+  try {
+    const c = JSON.parse(readFileSync(CACHE, 'utf8'));
+    return c.kluc === kluc ? new Map(Object.entries(c.subory)) : new Map();
+  } catch {
+    return new Map();
+  }
+}
+
+function ulozCache(kluc, zaznamy) {
+  if (process.env.MEMEX_MAP_CACHE === '0') return;
+  // Cez dočasný súbor a premenovanie: dva súbežné dotazy nesmú nechať polovičný JSON.
+  const docasny = `${CACHE}.${process.pid}.tmp`;
+  try {
+    writeFileSync(docasny, JSON.stringify({ kluc, subory: Object.fromEntries(zaznamy) }), 'utf8');
+    renameSync(docasny, CACHE);
+  } catch {
+    try { rmSync(docasny, { force: true }); } catch { /* nič */ }
+  }
+}
+
+/** Všetko, čo sa dá o súbore povedať bez ostatných súborov. */
+function rozober(f, text, polia, { chceSkratky, chceSkryte, chceSymboly }) {
+  const z = describe(f, text);
+  const out = { d: z.description, l: z.line };
+  // Osnova sa počíta pri tom istom čítaní ako všetko ostatné — súbor sa
+  // kvôli nej neotvára druhýkrát.
+  if (chceSymboly) out.sym = symboly(text);
+  if (chceSkryte) {
+    // Identifikátory súboru. Ktoré z nich niečo rozlišujú, sa rozhodne až
+    // potom — dovtedy nie je známe, v koľkých súboroch ktorý je.
+    const vlastne = new Set();
+    /*
+      `\b` je v JavaScripte ASCII a to je tu chyba, nie detail.
+
+      Pôvodne tu stálo `/\b[a-zA-Z][a-zA-Z0-9]{5,}\b/`, čiže sa zbierali len
+      slová bez diakritiky. Slovenské slovo z komentára alebo z popisku sa
+      doň nedostalo nikdy — a práve tým sa človek pýta. Namerané na jednom
+      module: 90 zachytených pojmov proti 116, teda 44 zahodených, medzi
+      nimi `prečítanie`, `požiadavky`, `prehliadača`, `orezávajú`.
+
+      Je to presne tá pasca, ktorú má tento projekt zapísanú vo vlastných
+      pravidlách — a porušoval ju vo vlastnom kóde.
+
+      Namerané po oprave: MRR 0,535 → 0,574, R@12 73,7 → 81,7 %, jedno slovo
+      0,242 → 0,263 a prázdnych odpovedí zo 7,0 na 2,3 %. Drží na oboch
+      poloviciach. Stavba mapy stojí 1,76 s namiesto 1,16.
+    */
+    for (const m of text.matchAll(/[\p{L}][\p{L}\p{N}]{5,}/gu)) vlastne.add(undiacritic(m[0]));
+    out.ids = [...vlastne];
+  }
+  if (polia.size) {
+    const found = identifiers(text, polia);
+    if (found.size) out.pol = [...found];
+  }
+  if (chceSkratky) {
+    // Jediný výskyt je zmienka, nie domov.
+    const sk = [...skratkyVSubore(text)].filter(([, n]) => n >= 2);
+    if (sk.length) out.sk = sk;
+  }
+  return out;
+}
+
 function build(files) {
   const polia = ABLATE.has('seeds') ? new Set() : schemaFields();
-  const chceSkratky = !ABLATE.has('abbrev');
+  const chce = { chceSkratky: !ABLATE.has('abbrev'), chceSkryte: !ABLATE.has('skryte'), chceSymboly: !ABLATE.has('symboly') };
+  const kluc = klucCache(polia);
+  const stare = nacitajCache(kluc);
+  const zaznamy = new Map();
+  let zmenene = 0;
+  for (const f of files) {
+    let st = null;
+    try { st = statSync(f); } catch { /* zmizol medzi výpisom a čítaním */ }
+    const c = stare.get(f);
+    if (st && c && c.m === st.mtimeMs && c.s === st.size) { zaznamy.set(f, c); continue; }
+    let text = null;
+    try { text = readFileSync(f, 'utf8'); } catch { /* nečitateľný súbor zostane v mape bez popisu */ }
+    zaznamy.set(f, text === null ? { m: 0, s: -1, d: null, l: null } : { m: st?.mtimeMs ?? 0, s: st?.size ?? -1, ...rozober(f, text, polia, chce) });
+    zmenene++;
+  }
+  if (zmenene || stare.size !== zaznamy.size) ulozCache(kluc, zaznamy);
+
   const vSubore = new Map();
   const pocet = new Map();
   const kdeSkratka = new Map();
-  const idSubor = new Map();
   const idPocet = new Map();
-  const symbolySuboru = new Map();
-  const chceSkryte = !ABLATE.has('skryte');
-  const chceSymboly = !ABLATE.has('symboly');
-  if (polia.size || chceSkratky || chceSkryte || chceSymboly) {
-    for (const f of files) {
-      let text;
-      try { text = readFileSync(f, 'utf8'); } catch { continue; }
-      // Osnova sa počíta pri tom istom čítaní ako všetko ostatné — súbor sa
-      // kvôli nej neotvára druhýkrát.
-      if (chceSymboly) symbolySuboru.set(f, symboly(text));
-      if (chceSkryte) {
-        // Identifikátory súboru. Ktoré z nich niečo rozlišujú, sa rozhodne až
-        // potom — dovtedy nie je známe, v koľkých súboroch ktorý je.
-        const vlastne = new Set();
-        /*
-          `\b` je v JavaScripte ASCII a to je tu chyba, nie detail.
-
-          Pôvodne tu stálo `/\b[a-zA-Z][a-zA-Z0-9]{5,}\b/`, čiže sa zbierali len
-          slová bez diakritiky. Slovenské slovo z komentára alebo z popisku sa
-          doň nedostalo nikdy — a práve tým sa človek pýta. Namerané na jednom
-          module: 90 zachytených pojmov proti 116, teda 44 zahodených, medzi
-          nimi `prečítanie`, `požiadavky`, `prehliadača`, `orezávajú`.
-
-          Je to presne tá pasca, ktorú má tento projekt zapísanú vo vlastných
-          pravidlách — a porušoval ju vo vlastnom kóde.
-
-          Namerané po oprave: MRR 0,535 → 0,574, R@12 73,7 → 81,7 %, jedno slovo
-          0,242 → 0,263 a prázdnych odpovedí zo 7,0 na 2,3 %. Drží na oboch
-          poloviciach. Stavba mapy stojí 1,76 s namiesto 1,16.
-        */
-        for (const m of text.matchAll(/[\p{L}][\p{L}\p{N}]{5,}/gu)) vlastne.add(undiacritic(m[0]));
-        idSubor.set(f, vlastne);
-        for (const w of vlastne) idPocet.set(w, (idPocet.get(w) ?? 0) + 1);
-      }
-      if (polia.size) {
-        const found = identifiers(text, polia);
-        if (found.size) {
-          vSubore.set(f, found);
-          for (const p of found) pocet.set(p, (pocet.get(p) ?? 0) + 1);
-        }
-      }
-      if (chceSkratky) {
-        for (const [sk, n] of skratkyVSubore(text)) {
-          // Jediný výskyt je zmienka, nie domov.
-          if (n < 2) continue;
-          let z = kdeSkratka.get(sk);
-          if (!z) kdeSkratka.set(sk, (z = []));
-          z.push({ f, n });
-        }
-      }
+  for (const [f, z] of zaznamy) {
+    for (const w of z.ids ?? []) idPocet.set(w, (idPocet.get(w) ?? 0) + 1);
+    if (z.pol) {
+      vSubore.set(f, z.pol);
+      for (const p of z.pol) pocet.set(p, (pocet.get(p) ?? 0) + 1);
+    }
+    for (const [sk, n] of z.sk ?? []) {
+      let x = kdeSkratka.get(sk);
+      if (!x) kdeSkratka.set(sk, (x = []));
+      x.push({ f, n });
     }
   }
   // Skratka označí len tie súbory, kde jej je najviac — inak neoznačí nič použiteľné.
@@ -631,7 +698,8 @@ function build(files) {
   const mosty = new Set([...pocet.entries()].filter(([, n]) => n >= SEED_MIN && n <= SEED_MAX).map(([p]) => p));
 
   const modules = files.map((f) => {
-    const zaklad = describe(f);
+    const z = zaznamy.get(f) ?? {};
+    const zaklad = { description: z.d ?? null, line: z.l ?? null };
     const seeds = [...(vSubore.get(f) ?? [])].filter((p) => mosty.has(p)).slice(0, 2);
     seeds.push(...(domov.get(f) ?? []));
     // Až za popis a len keď tam ešte nie sú — popis je o obrazovke, toto je most.
@@ -673,8 +741,8 @@ function build(files) {
       modulov namiesto 7,2. Výpis je aj tak orezaný na dvanásť, takže sa to
       prejaví len na čísle „z koľkých" a na `--all`.
     */
-    const skryte = chceSkryte
-      ? [...(idSubor.get(f) ?? [])].filter((w) => (idPocet.get(w) ?? 0) <= SKRYTE_MAX)
+    const skryte = chce.chceSkryte
+      ? (z.ids ?? []).filter((w) => (idPocet.get(w) ?? 0) <= SKRYTE_MAX)
       : [];
     return {
       path: relative(ROOT, f).split(sep).join('/'),
@@ -683,7 +751,7 @@ function build(files) {
       skryte,
       // Osnova sa do MAP.md nezapisuje — je to ďalšia vec, ktorú mapa vie a
       // nezobrazuje, presne ako skryté pojmy.
-      symboly: symbolySuboru.get(f) ?? [],
+      symboly: z.sym ?? [],
     };
   });
 
@@ -731,6 +799,8 @@ function build(files) {
 const argv = process.argv.slice(2);
 const quiet = argv.includes('--quiet');
 const batch = argv.includes('--batch');
+// Hook v projekte bez pamäte nemá čo stavať — a nemá si ani zakladať cache.
+if (quiet && argv[0] !== 'find' && argv[0] !== 'outline' && !(existsSync(MEMEX) || CESTY.nastavenieExistuje)) process.exit(0);
 const map = build(collect());
 
 /*

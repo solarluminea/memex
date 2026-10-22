@@ -127,3 +127,27 @@ test('MCP server: nástroje, hľadanie s dobehnutím indexu a čítanie len z ar
   assert.doesNotMatch(r[5].result.content[0].text, /nečítať/);
   assert.equal(r[6].error.code, -32601);
 });
+
+/*
+  Hranice čítania cez MCP. Každý prípad bol overený ako skutočná diera:
+  `to: -1` obišlo limit štyristo riadkov, sieťová cesta otvorila spojenie von,
+  otázka `--index` prestavala index a notifikácia `tools/call` sa vykonala.
+*/
+test('MCP server: rozsah čítania, sieťové cesty, otázka ako prepínač a notifikácie', async () => {
+  const f = priprava();
+  mkdirSync(f.archiv, { recursive: true });
+  writeFileSync(join(f.archiv, 'dlhy.md'), Array.from({ length: 1000 }, (_, i) => `riadok ${i + 1}`).join('\n'));
+  const r = await mcp(f.env, [
+    { id: 1, method: 'tools/call', params: { name: 'memex_read', arguments: { file: 'dlhy.md', from: 1, to: -1 } } },
+    { id: 2, method: 'tools/call', params: { name: 'memex_read', arguments: { file: String.raw`\\192.0.2.1\share\x.md` } } },
+    { method: 'tools/call', params: { name: 'memex_read', arguments: { file: 'dlhy.md' } } },
+    { id: 3, method: 'tools/call', params: { name: 'memex_search', arguments: { query: '--index' } } },
+    { id: 4, method: 'tools/call', params: { name: 'memex_outline', arguments: { file: resolve('scripts/kde.mjs') } } },
+  ]);
+  const riadky = r[1].result.content[0].text.split('\n').filter((l) => /^\s+\d+ {2}riadok/.test(l));
+  assert.ok(riadky.length <= 400, `prečítaných ${riadky.length} riadkov`);
+  assert.equal(r[2].result.isError, true);
+  assert.doesNotMatch(r[3].result.content[0].text, /^Index: /m);
+  assert.equal(r[4].result.isError, true, 'osnova mimo projektu');
+  assert.equal(Object.keys(r).length, 4, 'na notifikáciu sa neodpovedá');
+});

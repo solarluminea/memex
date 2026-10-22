@@ -39,7 +39,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { kde } from './kde.mjs';
 import { archivuj } from './archivator.mjs';
-import { redakcia, failureLine } from './prevod.mjs';
+import { redakcia, failureLine, prvyArgument } from './prevod.mjs';
 
 /*
   Kľúč projektu a hľadanie zdroja sú v `kde.mjs`.
@@ -76,19 +76,16 @@ const blocks = (c) => (Array.isArray(c) ? c : typeof c === 'string' ? [{ type: '
   bez medzier a do šesťdesiatich znakov. Prompt ani dlhý text sa tým nedostane
   dnu, a `--file` zároveň získa druhú os — „ktoré relácie sa dotkli scenára
   769715" sa dá grepnúť rovnako ako cesta k súboru.
+
+  Samotná funkcia `prvyArgument` je v `prevod.mjs`, spoločná s Codexom a
+  s redakciou — hodnota bez medzier do šesťdesiatich znakov je presne tvar kľúča.
 */
-function prvyArgument(i) {
-  for (const [k, v] of Object.entries(i)) {
-    if (typeof v === 'number' || typeof v === 'boolean') return ` ${k}=${v}`;
-    if (typeof v === 'string' && v.length <= 60 && v.length > 0 && !/\s/.test(v)) return ` ${k}=${v}`;
-  }
-  return '';
-}
 
 /** One line per tool call — what was done, not what came back. */
 function toolSummary(b) {
   const i = b.input ?? {};
-  if (['Read', 'Glob', 'Grep'].includes(b.name)) return `[Tool: ${b.name} ${i.file_path ?? i.pattern ?? ''}]`;
+  // Vzor grepu je text od človeka a môže v ňom byť čokoľvek, aj kľúč.
+  if (['Read', 'Glob', 'Grep'].includes(b.name)) return redakcia(`[Tool: ${b.name} ${i.file_path ?? i.pattern ?? ''}]`);
   if (['Edit', 'Write', 'NotebookEdit'].includes(b.name)) return `[Tool: ${b.name} ${i.file_path ?? i.notebook_path ?? ''}]`;
   // PowerShell je na Windowse hlavný shell a jeho príkaz nesie to isté, čo Bash.
   if (b.name === 'Bash' || b.name === 'PowerShell') {

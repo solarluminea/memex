@@ -102,10 +102,13 @@ at 260 topics and every memory question started with it. A search now returns
 curated trail topics, topics derived from the archive by regex, and passages —
 each an exact line range — for **832 tokens on real questions, 15.3× less**.
 
-The full read is not gone, because it earns its price in one case: measured,
-searching headings finds the right entry 57.7 % of the time, and **0 %** when
-the question is a paraphrase that shares no word with the heading. Cheap and
-fallible first, expensive and thorough as the fallback.
+The full read used to be the fallback for one case: searching headings found
+the right entry **0 %** of the time when the question shared no word with the
+heading. It stopped being possible — on the same project the trail grew to
+10 536 topics and its index to about a million tokens — and it stopped being
+needed: since 0.27.0 a trail topic is also searched in the text its pointer
+covers, hidden and never printed, and such questions find the right topic
+among the first four **80.8 %** of the time (`bench.mjs parafraza`).
 
 The derived tier is free and it is the answer to the trail falling behind —
 only a model can write trail entries, so they lag, while a heading Claude
@@ -213,6 +216,7 @@ inflated. Old telemetry rows carry no version and are recomputed on sight.
 | `/memex:distill` | build the trail (batch job, tens of minutes) |
 | `/memex:status` | health: what's archived, indexed, uncovered |
 | `/memex:stats` | what navigation costs: steps and tokens per edit |
+| `scripts/kontext.mjs` | where the tokens go: context size, cache expiry, subagents; `--strop` simulates earlier compaction |
 | `scripts/bench.mjs` | does the map find the right file? measured against git |
 | `search.mjs --file <path>` | which sessions touched this file, and where |
 
@@ -228,6 +232,22 @@ is not guaranteed. So the index could be built over an archive still being
 written, and end up not knowing the newest session — with both steps exiting
 zero. Measured here, the gap was 300 ms in the right direction; it only has to
 be the wrong way round once.
+
+Since 0.27.0 the archive and the index are incremental — the archiver reads
+only what a transcript gained since the last run, the index re-indexes only
+the tail of a transcript that grew — so the whole SessionEnd step takes about
+two seconds on an archive of 170 transcripts instead of twenty.
+
+**Compaction.** A `PreCompact` hook archives and indexes the session before
+Claude Code summarises it, and a `SessionStart` hook on `compact` tells the
+model in two sentences where the rest is and how to search it. The summary
+keeps the topic and drops the fact; the archive keeps the fact. That is what
+makes it safe to compact early — and early is where the money is:
+`scripts/kontext.mjs` measured on 68 000 API calls that reading the context
+again from cache is 71 % of the price and that 74 % of the price falls on
+calls above 200k tokens. Simulated over the same calls, compacting at 200k
+would cost 60–66 % of what it did. Set it in Claude Code with
+`autoCompactWindow` (or `/autocompact`).
 
 A SessionStart hook checks what fell behind — file times and two counts from
 the finished index, 0.19 s — and stays quiet unless something actually is.

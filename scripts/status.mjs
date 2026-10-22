@@ -267,6 +267,42 @@ async function stavIndexu() {
   }
 }
 
+/*
+  Rozostavané indexy, ktoré po sebe nikto neupratal.
+
+  Stavba ide do `<index>.<pid>.stavia` a premenuje sa až hotová. Prerušená
+  stavba ten súbor nechá ležať, a upratuje ho až ďalšia stavba — od 0.21.0.
+  Kto má nainštalovanú staršiu verziu, toho upratovanie nikdy nezbehne.
+  Namerané na skutočnom projekte s 0.23.0: **165 MB** v piatich súboroch za tri
+  dni, päťkrát viac než celý archív, a hlásenie o tom nepovedalo nič.
+
+  Hodina je tá istá hranica ako pri stavbe: bežiaca stavba trvá sekundy.
+  Žurnál hlavného indexu patrí sem tiež — hľadanie do indexu nezapisuje,
+  takže starý `-journal` vedľa neho je zvyšok po niečom, čo sa neskončilo.
+*/
+function zvysky() {
+  const kde = dirname(CESTY.index);
+  const meno = CESTY.index.split(/[\\/]/).pop();
+  if (!existsSync(kde)) return [];
+  const out = [];
+  for (const f of readdirSync(kde)) {
+    const zvysok = (f.startsWith(`${meno}.`) && /\.stavia(-journal)?$/.test(f)) || f === `${meno}-journal`;
+    if (!zvysok) continue;
+    try {
+      const s = statSync(join(kde, f));
+      if (Date.now() - s.mtimeMs > 3600_000) out.push({ cesta: join(kde, f), bajtov: s.size });
+    } catch { /* zmizol medzi výpisom a statom */ }
+  }
+  return out;
+}
+
+if (process.argv.includes('--oprav') || process.argv.includes('--fix')) {
+  const { rmSync } = await import('node:fs');
+  const z = zvysky();
+  for (const x of z) { try { rmSync(x.cesta, { force: true }); } catch { /* ďalší beh to skúsi znova */ } }
+  if (z.length) console.log(`✓ removed ${z.length} leftover index build file(s), ${MB(z.reduce((a, x) => a + x.bajtov, 0))} MB\n`);
+}
+
 const ix = await stavIndexu();
 if (ix.hlaska) {
   console.log(`Full-text  ${ix.hlaska}`);
@@ -282,6 +318,11 @@ if (ix.hlaska) {
     console.log(`! ${koľko} changed since the index was built — node memex/scripts/search.mjs --index`);
     problemy.push('the index is behind the archive');
   }
+}
+const zvyskyIndexu = zvysky();
+if (zvyskyIndexu.length) {
+  console.log(`! ${zvyskyIndexu.length} leftover index build file(s), ${MB(zvyskyIndexu.reduce((a, x) => a + x.bajtov, 0))} MB — status.mjs --oprav removes them`);
+  problemy.push('leftover index build files waste disk space');
 }
 console.log(`Trail      ${z.length} topics, ${z.reduce((a, x) => a + x.pointers.length, 0)} pointers`);
 if (z.some((x) => x.expired)) console.log(`           ${z.filter((x) => x.expired).length} marked "Valid until"`);

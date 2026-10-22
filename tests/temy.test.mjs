@@ -102,6 +102,43 @@ test('Keď kurátorská téma nesedí, výpis navedie na celý rozcestník', () 
 });
 
 /*
+  Téma stopy sa nájde aj slovami, ktoré stoja v rozsahu a nie v nadpise.
+  Nadpis hovorí „zámok na dávke", rozsah hovorí „fronta" a „minúty" — otázka
+  na frontu a minútový limit má trafiť tú istú tému.
+*/
+test('Téma stopy sa nájde slovami z rozsahu, nie len z nadpisu', () => {
+  const f = príprava();
+  const v = f.beh('fronta neodpovie do minúty', '--n', '1').stdout;
+  assert.match(v, /Trail topics[\s\S]*Zámok na dávke/);
+});
+
+test('Ten istý nadpis s dvoma ukazovateľmi je jedna téma s dvoma rozsahmi', () => {
+  const f = príprava();
+  writeFileSync(join(f.p, '.memex/trail/2026-09-01-fronta.md'),
+    '# 2026-09-01 · Zámok na dávke rieši dvojité generovanie faktúr\n\n' +
+    '- [`r1.md` riadky 14–18](../archive/r1.md#L14-L18)\n- [`r1.md` riadky 20–24](../archive/r1.md#L20-L24)\n', 'utf8');
+  f.beh('--index');
+  const v = f.beh('dvojite generovanie faktur', '--n', '1').stdout;
+  assert.equal(v.match(/Zámok na dávke/g).length, 1, v);
+  assert.match(v, /r1\.md:14-18, 20-24/);
+});
+
+test('Otázka za oddeľovačom -- sa hľadá, aj keď vyzerá ako prepínač', () => {
+  const f = príprava();
+  const v = f.beh('--n', '2', '--', '--index');
+  assert.equal(v.status, 0, v.stderr);
+  assert.doesNotMatch(v.stdout, /^Index: /m, 'otázka nesmie prestavať index');
+});
+
+test('Pri veľkom rozcestníku sa neradí čítať ho celý', () => {
+  const f = príprava();
+  writeFileSync(join(f.p, '.memex/TRAIL.md'), '- téma\n'.repeat(30000), 'utf8');
+  const v = f.beh('kataster vymera wfs', '--n', '2').stdout;
+  assert.doesNotMatch(v, /read the whole trail index/);
+  assert.match(v, /do not read it whole/);
+});
+
+/*
   Index staršej schémy sa musí prestavať, inak by prvá úroveň ticho chýbala
   a odpoveď by vyzerala úplne.
 */

@@ -120,13 +120,16 @@ export const prepinac = (meno, argv = process.argv) => {
   return v && !v.startsWith('--') ? v : null;
 };
 
-function precitaj(koren) {
+function precitaj(koren, hadz) {
   const p = join(koren, SUBOR);
   if (!existsSync(p)) return {};
   try {
     return JSON.parse(readFileSync(p, 'utf8'));
   } catch (e) {
     // Pokazené nastavenie sa nesmie prejsť ticho — inak sa opäť píše inam.
+    // Server MCP volá túto funkciu vo vlastnom procese; ukončenie by ho zabilo
+    // pre všetkých kvôli rozpísanému súboru v jednom projekte.
+    if (hadz) throw new Error(`${p} sa nedá prečítať: ${e.message}`);
     console.error(`⚠ ${p} sa nedá prečítať: ${e.message}`);
     process.exit(1);
   }
@@ -138,8 +141,8 @@ function precitaj(koren) {
  * `koren` je koreň projektu; všetko relatívne sa počíta od neho, aby sa
  * nastavenie dalo napísať prenosne a fungovalo aj pri volaní z podpriečinka.
  */
-export function kde(koren = process.env.MEMEX_PROJECT_ROOT || process.cwd(), argv = process.argv) {
-  const c = precitaj(koren);
+export function kde(koren = process.env.MEMEX_PROJECT_ROOT || process.cwd(), argv = process.argv, { hadz = false } = {}) {
+  const c = precitaj(koren, hadz);
   const abs = (x) => (isAbsolute(x) ? x : join(koren, x));
   const vyber = (flag, env, zNastavenia, predvolene) =>
     abs(prepinac(flag, argv) ?? process.env[env] ?? zNastavenia ?? predvolene);

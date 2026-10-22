@@ -38,12 +38,23 @@ const TICHO = process.argv.includes('--quiet');
 // keď predošlý beh niečo nestihol.
 hookVstup();
 
-const KROKY = [
-  ['archive.mjs', []],
-  ['search.mjs', ['--index']],
-  ['map.mjs', []],
-  ['stats.mjs', []],
-];
+/*
+  `--pred-kompakciou` — len archív a index, z hooku `PreCompact`.
+
+  Kompakcia nahradí rozhovor súhrnom a súhrn stratí presne to, o čom je celý
+  tento nástroj: konkrétne číslo, chybovú hlášku, dôvod. Zostane to v prepise —
+  ale archív sa dopisoval až na konci relácie, a relácia, ktorá beží šesť
+  týždňov s päťdesiatimi kompakciami, sa nekončí. Pred kompakciou sa preto
+  zarchivuje a zaindexuje to, čo sa práve zhrnie, aby sa to dalo nájsť hneď
+  po nej. Mapa a telemetria s kompakciou nesúvisia a nezdržujú ju.
+
+  Je to aj podmienka toho, aby sa dalo kompaktovať skôr: na skutočnom projekte
+  pripadá 74 % ceny na volania s kontextom nad 200 tisíc tokenov.
+*/
+const PRED_KOMPAKCIOU = process.argv.includes('--pred-kompakciou');
+const KROKY = PRED_KOMPAKCIOU
+  ? [['archive.mjs', []], ['search.mjs', ['--index']]]
+  : [['archive.mjs', []], ['search.mjs', ['--index']], ['map.mjs', []], ['stats.mjs', []]];
 
 let zlyhalo = 0;
 for (const [skript, args] of KROKY) {

@@ -24,14 +24,17 @@ How:
 2. **Open the line range** with `Read` using `offset`/`limit`. The pointer is
    the answer's address, not the answer.
 
-3. **Read the whole trail index only if steps 1–2 came up short.** It is at
-   `.memex/TRAIL.md` (or wherever `memex.json` puts it) and on a real project
-   it is **~12k tokens**, against ~800 for the search above. It earns that
-   cost in exactly one case: the question is a paraphrase that shares no word
-   with any heading. Measured — heading search finds the right entry 57.7 % of
-   the time, and 0 % when the wording deliberately avoids the heading's words.
-   So when the search comes back with nothing that fits, this is not a
-   formality; it is the tier that still works.
+3. **If nothing fits, search again with other words or `--n 20`** before
+   anything else. Trail topics are searched in the text they point at as well
+   as in their heading, so a question worded differently from the heading
+   still reaches them — measured, 80.8 % of such questions find the right
+   topic among the first four, where heading-only search found 2.4 %.
+
+   Read the whole trail index (`.memex/TRAIL.md`, or wherever `memex.json`
+   puts it) **only when the search output says it is small enough**. At 260
+   topics it was 12k tokens; on a project with 10 000 topics it is 3 MB,
+   about a million tokens, and reading it is not possible. The search prints
+   which case you are in.
 
 To go the other way — from a file to the conversations that changed it — use
 `node ${CLAUDE_PLUGIN_ROOT}/scripts/search.mjs --file <path>`. The archive
